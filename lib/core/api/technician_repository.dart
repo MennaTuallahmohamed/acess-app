@@ -233,6 +233,82 @@ class TechnicianRepository {
     );
   }
 
+  Future<DeviceModel> getDeviceBySecretCode(String secretCode) async {
+    final cleanCode = secretCode.trim();
+
+    if (cleanCode.isEmpty) {
+      throw const ApiException('QR Code غير صالح');
+    }
+
+    final hasSignal = await _hasNetworkSignal();
+
+    if (!hasSignal) {
+      throw const ApiException(
+        'لا يوجد اتصال بالإنترنت. QR Code يحتاج اتصال بالباك إند للتحقق من الجهاز.',
+      );
+    }
+
+    try {
+      final response = await _dio.get(
+        '/devices/scan/${Uri.encodeComponent(cleanCode)}',
+        options: Options(
+          sendTimeout: const Duration(seconds: 15),
+          receiveTimeout: const Duration(seconds: 20),
+        ),
+      );
+
+      final deviceJson = unwrapMap(response.data);
+
+      await _offline.upsertDevice(deviceJson);
+
+      return _mapDevice(deviceJson);
+    } on DioException catch (error) {
+      if (error.response?.statusCode == 404) {
+        throw const ApiException('لا يوجد جهاز مرتبط بهذا QR Code');
+      }
+
+      throw ApiException.fromDio(error);
+    }
+  }
+
+  Future<DeviceModel> searchDeviceManual(String value) async {
+    final cleanValue = value.trim();
+
+    if (cleanValue.isEmpty) {
+      throw const ApiException('برجاء إدخال كود الجهاز أو IP أو Serial Number');
+    }
+
+    return getDeviceByCode(cleanValue);
+  }
+
+  Future<void> logQrScanAttempt({
+    required String scannedCode,
+    required bool success,
+    required int attemptNumber,
+    String? reason,
+  }) async {
+    try {
+      await _dio.post(
+        '/devices/scan-attempts',
+        data: {
+          'scannedCode': scannedCode.trim(),
+          'success': success,
+          'attemptNumber': attemptNumber,
+          'reason': reason,
+        },
+        options: Options(
+          sendTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 10),
+          headers: {
+            'Accept': 'application/json',
+          },
+        ),
+      );
+    } catch (e) {
+      debugPrint('QR SCAN ATTEMPT LOG SKIPPED: $e');
+    }
+  }
+
   Future<List<InspectionIssueOption>> getIssuesForDevice(
     DeviceModel device,
   ) async {
@@ -357,7 +433,14 @@ class TechnicianRepository {
         throw const ApiException('الصورة المختارة غير موجودة');
       }
 
-      if (!isGoodInspection && draft.completedSolutionIds.isEmpty) {
+      final bool noRegisteredSolution =
+          draft.notes.contains('لم أجد حل مسجل لهذه المشكلة') ||
+              draft.notes.contains('لم أجد حل') ||
+              draft.notes.contains('لا توجد حلول مسجلة');
+
+      if (!isGoodInspection &&
+          draft.completedSolutionIds.isEmpty &&
+          !noRegisteredSolution) {
         throw const ApiException('لازم تعملي Done لخطوة حل واحدة على الأقل');
       }
 
@@ -637,6 +720,63 @@ class TechnicianRepository {
     }).toList();
   }
 
+  Future<List<ReportModel>> getOfflinePendingReports({
+    required String technicianId,
+    required String technicianName,
+  }) async {
+    final pending = await _offline.getPendingInspections();
+
+    final reports = pending.map((item) {
+      final createdAtRaw = item['createdOfflineAt']?.toString() ?? '';
+      final createdAt = DateTime.tryParse(createdAtRaw) ?? DateTime.now();
+
+      final inspectionStatus = item['inspectionStatus']?.toString() ?? 'OK';
+      final result = _mapInspectionResult(inspectionStatus);
+
+      final deviceCode = item['deviceCode']?.toString() ??
+          item['deviceId']?.toString() ??
+          '';
+
+      final notes = item['notes']?.toString() ?? '';
+      final issueCode = item['issueCode']?.toString();
+      final issueTitle = item['issueTitle']?.toString();
+
+      final fullNotes = [
+        'محفوظ محليًا — في انتظار المزامنة',
+        if (notes.trim().isNotEmpty) notes.trim(),
+        if (issueCode != null && issueCode.trim().isNotEmpty)
+          'Issue Code: $issueCode',
+        if (issueTitle != null && issueTitle.trim().isNotEmpty)
+          'Issue Title: $issueTitle',
+      ].join('\n');
+
+      return ReportModel(
+        id: item['localPendingId']?.toString() ??
+            'OFFLINE-${createdAt.millisecondsSinceEpoch}',
+        reportNumber: 'OFFLINE-${createdAt.millisecondsSinceEpoch}',
+        deviceId: item['deviceId']?.toString() ?? '',
+        deviceName: deviceCode.isNotEmpty ? deviceCode : 'Offline Device',
+        deviceType: 'access_control',
+        deviceCode: deviceCode,
+        locationText: item['locationText']?.toString() ?? fullNotes,
+        building: '',
+        floor: '',
+        result: result,
+        notes: fullNotes,
+        inspectorName: technicianName,
+        inspectorId: technicianId,
+        latitude: (item['latitude'] as num?)?.toDouble() ?? 0,
+        longitude: (item['longitude'] as num?)?.toDouble() ?? 0,
+        createdAt: createdAt,
+        imageUrl: item['imagePath']?.toString(),
+      );
+    }).toList();
+
+    reports.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+    return reports;
+  }
+
   Future<void> syncNow() async {
     try {
       await refreshOfflineCache();
@@ -776,9 +916,18 @@ class TechnicianRepository {
   DeviceModel _mapDevice(Map<String, dynamic> json) {
     final deviceType = json['deviceType'] as Map<String, dynamic>? ?? {};
     final location = json['location'] as Map<String, dynamic>? ?? {};
-    final lastInspection = json['lastInspection'] as Map<String, dynamic>? ?? {};
+
+    final inspections = json['inspections'] is List
+        ? json['inspections'] as List
+        : const [];
+
+    final lastInspection = inspections.isNotEmpty
+        ? inspections.first as Map<String, dynamic>
+        : (json['lastInspection'] as Map<String, dynamic>? ?? {});
+
     final technician =
         lastInspection['technician'] as Map<String, dynamic>? ?? {};
+
     final images = lastInspection['images'] as List? ?? [];
     final status = json['currentStatus']?.toString() ?? 'OK';
 
@@ -793,7 +942,7 @@ class TechnicianRepository {
       ipAddress: json['ipAddress']?.toString() ?? '',
       firmware: json['firmware']?.toString() ?? '',
       modelNumber: json['modelNumber']?.toString() ?? '',
-      notes: json['notes']?.toString() ?? '',
+      notes: _buildDeviceNotes(json, lastInspection),
       location: _buildLocation(location),
       building: location['building']?.toString() ?? '',
       floor: location['zone']?.toString() ?? '',
@@ -816,6 +965,23 @@ class TechnicianRepository {
       backendDeviceTypeName: deviceType['name']?.toString(),
       backendCategoryName: _inferCategoryName(deviceType['name']?.toString()),
     );
+  }
+
+  String _buildDeviceNotes(
+    Map<String, dynamic> deviceJson,
+    Map<String, dynamic> lastInspection,
+  ) {
+    final inspectionNotes = lastInspection['notes']?.toString() ?? '';
+    final issueReason = lastInspection['issueReason']?.toString() ?? '';
+    final deviceNotes = deviceJson['notes']?.toString() ?? '';
+
+    final lines = <String>[
+      if (inspectionNotes.trim().isNotEmpty) inspectionNotes.trim(),
+      if (issueReason.trim().isNotEmpty) 'Issue Reason: ${issueReason.trim()}',
+      if (deviceNotes.trim().isNotEmpty) 'Device Notes: ${deviceNotes.trim()}',
+    ];
+
+    return lines.join('\n');
   }
 
   ReportModel _mapInspectionToReport(Map<String, dynamic> json) {

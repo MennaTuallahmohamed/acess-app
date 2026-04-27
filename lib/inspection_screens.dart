@@ -65,6 +65,9 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
 
   bool get _hasAnyDoneSolution => _doneSolutionIds.isNotEmpty;
 
+  bool get _noSolutionsFound =>
+      _isFaultSelected && _selectedIssue != null && _solutions.isEmpty;
+
   String get _deviceTypeDisplay {
     if ((widget.device.backendDeviceTypeName ?? '').trim().isNotEmpty) {
       return widget.device.backendDeviceTypeName!.trim();
@@ -161,8 +164,16 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
     });
 
     try {
-      final repo = ref.read(technicianRepositoryProvider);
-      final result = await repo.getIssueSolutions(issue.id);
+      List<IssueSolutionModel> result = List<IssueSolutionModel>.from(
+        issue.solutions,
+      );
+
+      if (result.isEmpty) {
+        final repo = ref.read(technicianRepositoryProvider);
+        result = await repo.getIssueSolutions(issue.id);
+      }
+
+      result.sort((a, b) => a.stepOrder.compareTo(b.stepOrder));
 
       if (!mounted) return;
 
@@ -211,6 +222,15 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
     buffer.writeln('Issue ID: ${issue.id}');
     buffer.writeln('Issue Code: ${issue.issueCode}');
     buffer.writeln('Issue Title: ${issue.title}');
+    buffer.writeln('Issue Severity: ${issue.severity}');
+
+    if (issue.categoryName.trim().isNotEmpty) {
+      buffer.writeln('Issue Category: ${issue.categoryName}');
+    }
+
+    if (issue.deviceTypeName.trim().isNotEmpty) {
+      buffer.writeln('Device Type: ${issue.deviceTypeName}');
+    }
 
     if (issue.description.trim().isNotEmpty) {
       buffer.writeln('Issue Description: ${issue.description}');
@@ -218,12 +238,21 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
 
     buffer.writeln('حلول المشكلة المختارة:');
 
+    if (_solutions.isEmpty) {
+      buffer.writeln('لم أجد حل مسجل لهذه المشكلة في قاعدة البيانات');
+      return buffer.toString().trim();
+    }
+
     for (final solution in _solutions) {
       final isDone = _doneSolutionIds.contains(solution.id);
 
       buffer.writeln(
         'Solution ${solution.id}: ${solution.stepOrder}. ${solution.title} - ${isDone ? "DONE" : "NOT_DONE"}',
       );
+
+      if (solution.solutionCode.trim().isNotEmpty) {
+        buffer.writeln('Solution Code: ${solution.solutionCode}');
+      }
 
       if (solution.description.trim().isNotEmpty) {
         buffer.writeln('Solution Description: ${solution.description}');
@@ -266,19 +295,17 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
       return;
     }
 
-    if (_isFaultSelected && _solutions.isEmpty) {
-      setState(() => _error = 'لا توجد حلول لهذه المشكلة');
-      return;
-    }
-
-    if (_isFaultSelected && !_hasAnyDoneSolution) {
+    if (_isFaultSelected && _solutions.isNotEmpty && !_hasAnyDoneSolution) {
       setState(() => _error = 'لازم تعملي Done لخطوة حل واحدة على الأقل');
       return;
     }
 
-    if (_isFaultSelected && _deviceIsGoodAfterSolutions == null) {
+    if (_isFaultSelected &&
+        _solutions.isNotEmpty &&
+        _deviceIsGoodAfterSolutions == null) {
       setState(
-        () => _error = 'بعد تنفيذ الحلول اختاري هل الجهاز بقى سليم أم ما زال فيه عطل',
+        () => _error =
+            'بعد تنفيذ الحلول اختاري هل الجهاز بقى سليم أم ما زال فيه عطل',
       );
       return;
     }
@@ -291,7 +318,11 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
     });
 
     try {
-      final finalIsGood = _isGoodSelected || _deviceIsGoodAfterSolutions == true;
+      final bool noSolutionsFound =
+          _isFaultSelected && _selectedIssue != null && _solutions.isEmpty;
+
+      final finalIsGood = _isGoodSelected ||
+          (_solutions.isNotEmpty && _deviceIsGoodAfterSolutions == true);
 
       final resultForApi =
           finalIsGood ? InspectionResult.good : InspectionResult.faulty;
@@ -299,11 +330,24 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
       final List<String> notesLines = [
         'نوع الجهاز: $_deviceTypeDisplay',
         'حالة الجهاز في البداية: ${_deviceIsGoodAtStart == true ? "سليم" : "غير سليم"}',
-        'حالة الجهاز بعد الحل: ${finalIsGood ? "سليم" : "ما زال فيه عطل"}',
+        if (_isGoodSelected)
+          'حالة الجهاز بعد الفحص: سليم'
+        else if (noSolutionsFound)
+          'حالة الجهاز بعد الفحص: ما زال فيه عطل'
+        else
+          'حالة الجهاز بعد الحل: ${finalIsGood ? "سليم" : "ما زال فيه عطل"}',
         if (_selectedIssue != null)
           'المشكلة المختارة: ${_selectedIssue!.title}',
         if (_selectedIssue != null)
           'كود المشكلة المختارة: ${_selectedIssue!.issueCode}',
+        if (_selectedIssue != null &&
+            _selectedIssue!.categoryName.trim().isNotEmpty)
+          'تصنيف المشكلة: ${_selectedIssue!.categoryName}',
+        if (_selectedIssue != null &&
+            _selectedIssue!.description.trim().isNotEmpty)
+          'وصف المشكلة: ${_selectedIssue!.description}',
+        if (noSolutionsFound)
+          'ملاحظة الحل: لم أجد حل مسجل لهذه المشكلة في قاعدة البيانات',
         if (_doneSolutionIds.isNotEmpty)
           'Completed Steps IDs: ${(_doneSolutionIds.toList()..sort()).join(",")}',
         if (_doneSolutionIds.isNotEmpty)
@@ -408,9 +452,7 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
                 labels: _stepLabels,
               ),
             ).animate().fadeIn(duration: 400.ms).slideY(begin: -0.05),
-
             const SizedBox(height: 20),
-
             _FormSection(
               title: 'بيانات الجهاز',
               child: Column(
@@ -428,9 +470,7 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
                 ],
               ),
             ).animate(delay: 100.ms).fadeIn(),
-
             const SizedBox(height: 16),
-
             _FormSection(
               title: 'هل الجهاز سليم؟',
               child: Row(
@@ -459,10 +499,8 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
                 ],
               ),
             ).animate(delay: 150.ms).fadeIn(),
-
             if (_isFaultSelected) ...[
               const SizedBox(height: 16),
-
               _FormSection(
                 title: 'اختاري المشكلة حسب نوع الجهاز',
                 child: _loadingIssues
@@ -495,10 +533,8 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
                             }).toList(),
                           ),
               ).animate(delay: 220.ms).fadeIn(),
-
               if (_selectedIssue != null) ...[
                 const SizedBox(height: 16),
-
                 _FormSection(
                   title: 'حلول المشكلة المختارة',
                   child: _loadingSolutions
@@ -509,10 +545,23 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
                           ),
                         )
                       : _solutions.isEmpty
-                          ? Text(
-                              'لا توجد حلول لهذه المشكلة حالياً',
-                              style: AppText.small.copyWith(
-                                color: AppColors.textSecondary,
+                          ? Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(14),
+                              decoration: BoxDecoration(
+                                color: AppColors.warning.withOpacity(0.08),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: AppColors.warning.withOpacity(0.25),
+                                ),
+                              ),
+                              child: Text(
+                                'لا توجد حلول مسجلة لهذه المشكلة في قاعدة البيانات.\nسيتم حفظ التفتيش مع ملاحظة: لم أجد حل.',
+                                style: AppText.small.copyWith(
+                                  height: 1.6,
+                                  color: AppColors.textSecondary,
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
                             )
                           : Column(
@@ -555,9 +604,7 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
                             ),
                 ).animate(delay: 250.ms).fadeIn(),
               ],
-
               const SizedBox(height: 16),
-
               if (_hasAnyDoneSolution)
                 _FormSection(
                   title: 'بعد تنفيذ الحلول، حالة الجهاز الآن؟',
@@ -598,9 +645,7 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
                   ),
                 ).animate(delay: 280.ms).fadeIn(),
             ],
-
             const SizedBox(height: 16),
-
             _FormSection(
               title: AppStrings.notes,
               child: TextFormField(
@@ -614,9 +659,7 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
                 ),
               ),
             ).animate(delay: 300.ms).fadeIn(),
-
             const SizedBox(height: 16),
-
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -712,7 +755,6 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
                 ),
               ],
             ).animate(delay: 350.ms).fadeIn(),
-
             if (_error != null) ...[
               const SizedBox(height: 16),
               Container(
@@ -745,7 +787,6 @@ class _InspectionFormScreenState extends ConsumerState<InspectionFormScreen> {
                 ),
               ).animate().shake(),
             ],
-
             const SizedBox(height: 40),
           ],
         ),
@@ -869,8 +910,25 @@ class _IssueOptionCard extends StatelessWidget {
     required this.onTap,
   });
 
+  String _severityAr(String value) {
+    switch (value.toUpperCase()) {
+      case 'LOW':
+        return 'منخفض';
+      case 'MEDIUM':
+        return 'متوسط';
+      case 'HIGH':
+        return 'مرتفع';
+      case 'CRITICAL':
+        return 'حرج';
+      default:
+        return value;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final solutionsCount = issue.solutions.length;
+
     return InkWell(
       borderRadius: BorderRadius.circular(16),
       onTap: onTap,
@@ -909,6 +967,21 @@ class _IssueOptionCard extends StatelessWidget {
                           selected ? AppColors.accentDark : AppColors.textPrimary,
                     ),
                   ),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      _MiniTag(label: _severityAr(issue.severity)),
+                      if (issue.categoryName.trim().isNotEmpty)
+                        _MiniTag(label: issue.categoryName),
+                      _MiniTag(
+                        label: solutionsCount > 0
+                            ? '$solutionsCount حلول'
+                            : 'لا يوجد حل',
+                      ),
+                    ],
+                  ),
                   if (issue.description.trim().isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Text(
@@ -923,6 +996,36 @@ class _IssueOptionCard extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MiniTag extends StatelessWidget {
+  final String label;
+
+  const _MiniTag({
+    required this.label,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: 8,
+        vertical: 4,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceCard,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Text(
+        label,
+        style: AppText.caption.copyWith(
+          fontWeight: FontWeight.w700,
+          color: AppColors.textSecondary,
         ),
       ),
     );
@@ -995,6 +1098,16 @@ class _SolutionStepCard extends StatelessWidget {
               ),
             ],
           ),
+          if (solution.solutionCode.trim().isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Code: ${solution.solutionCode}',
+              style: AppText.caption.copyWith(
+                color: AppColors.accentDark,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
           if (solution.description.trim().isNotEmpty) ...[
             const SizedBox(height: 10),
             Text(

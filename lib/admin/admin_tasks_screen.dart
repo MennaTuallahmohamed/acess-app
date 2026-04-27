@@ -48,8 +48,10 @@ class _AdminTasksScreenState extends ConsumerState<AdminTasksScreen>
   @override
   void initState() {
     super.initState();
+
     final initial = (widget.initialFilter ?? 'ALL').toUpperCase();
     final index = _tabsStatus.indexOf(initial);
+
     _tabs = TabController(
       length: _tabsStatus.length,
       vsync: this,
@@ -103,8 +105,12 @@ class _AdminTasksScreenState extends ConsumerState<AdminTasksScreen>
     ref.invalidate(techniciansProvider);
     ref.invalidate(adminDevicesProvider(null));
     ref.invalidate(locationsProvider);
-    ref.invalidate(adminInspectionsProvider(_inspectionFilter));
+
+    // كل التفتيشات للملخص والتفاصيل
     ref.invalidate(monthlyInspectionsProvider);
+
+    // التفتيشات المفلترة لتاب التفتيشات فقط
+    ref.invalidate(adminInspectionsProvider(_inspectionFilter));
 
     for (final status in _tabsStatus) {
       if (status != 'ALL' && status != 'INSPECTIONS') {
@@ -116,8 +122,17 @@ class _AdminTasksScreenState extends ConsumerState<AdminTasksScreen>
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
+
     final tasksAsync = ref.watch(allTasksProvider);
-    final inspectionsAsync = ref.watch(adminInspectionsProvider(_inspectionFilter));
+
+    // ده لكل الأرقام العامة والتفاصيل، لا يتأثر بالفلاتر
+    final allInspectionsAsync = ref.watch(monthlyInspectionsProvider);
+
+    // ده لتاب التفتيشات فقط، يتأثر بالفلاتر
+    final filteredInspectionsAsync = ref.watch(
+      adminInspectionsProvider(_inspectionFilter),
+    );
+
     final techniciansAsync = ref.watch(activeTechniciansProvider);
     final devicesAsync = ref.watch(adminDevicesProvider(null));
     final locationsAsync = ref.watch(locationsProvider);
@@ -143,12 +158,14 @@ class _AdminTasksScreenState extends ConsumerState<AdminTasksScreen>
               showFilters: _showFilters,
               onBack: () => Navigator.maybePop(context),
               onRefresh: _refreshAll,
-              onToggleFilters: () => setState(() => _showFilters = !_showFilters),
+              onToggleFilters: () {
+                setState(() => _showFilters = !_showFilters);
+              },
               onCreate: widget.isViewer ? null : () => _showCreateTaskSheet(context),
             ),
             _SummaryBar(
               tasksAsync: tasksAsync,
-              inspectionsAsync: inspectionsAsync,
+              inspectionsAsync: allInspectionsAsync,
             ),
             if (_showFilters)
               _FiltersPanel(
@@ -165,12 +182,16 @@ class _AdminTasksScreenState extends ConsumerState<AdminTasksScreen>
                 onSearch: (v) => setState(() => _search = v),
                 onTech: (v) => setState(() => _filterTechId = v),
                 onDevice: (v) => setState(() => _filterDeviceId = v),
-                onCluster: (v) => setState(() {
-                  _filterCluster = v;
-                  _filterBuilding = null;
-                }),
+                onCluster: (v) {
+                  setState(() {
+                    _filterCluster = v;
+                    _filterBuilding = null;
+                  });
+                },
                 onBuilding: (v) => setState(() => _filterBuilding = v),
-                onInspectionStatus: (v) => setState(() => _inspectionStatus = v),
+                onInspectionStatus: (v) {
+                  setState(() => _inspectionStatus = v);
+                },
                 onClear: _clearFilters,
               ).animate().fadeIn(duration: 180.ms).slideY(begin: -0.05),
             Container(
@@ -184,27 +205,54 @@ class _AdminTasksScreenState extends ConsumerState<AdminTasksScreen>
                 indicatorColor: const Color(0xFF1A237E),
                 indicatorWeight: 3,
                 tabs: [
-                  _tab(Icons.all_inbox_rounded, l.isAr ? 'كل المهام' : 'All Tasks'),
-                  _tab(Icons.hourglass_empty_rounded, l.isAr ? 'معلقة' : 'Pending'),
-                  _tab(Icons.play_circle_rounded, l.isAr ? 'جارية' : 'In progress'),
-                  _tab(Icons.check_circle_rounded, l.isAr ? 'مكتملة' : 'Completed'),
-                  _tab(Icons.timer_off_rounded, l.isAr ? 'متأخرة' : 'Overdue'),
-                  _tab(Icons.bolt_rounded, l.isAr ? 'طارئة' : 'Urgent'),
-                  _tab(Icons.fact_check_rounded, l.isAr ? 'التفتيشات التي تمت' : 'Done Inspections'),
+                  _tab(
+                    Icons.all_inbox_rounded,
+                    l.isAr ? 'كل المهام' : 'All Tasks',
+                  ),
+                  _tab(
+                    Icons.hourglass_empty_rounded,
+                    l.isAr ? 'معلقة' : 'Pending',
+                  ),
+                  _tab(
+                    Icons.play_circle_rounded,
+                    l.isAr ? 'جارية' : 'In progress',
+                  ),
+                  _tab(
+                    Icons.check_circle_rounded,
+                    l.isAr ? 'مكتملة' : 'Completed',
+                  ),
+                  _tab(
+                    Icons.timer_off_rounded,
+                    l.isAr ? 'متأخرة' : 'Overdue',
+                  ),
+                  _tab(
+                    Icons.bolt_rounded,
+                    l.isAr ? 'طارئة' : 'Urgent',
+                  ),
+                  _tab(
+                    Icons.fact_check_rounded,
+                    l.isAr ? 'التفتيشات التي تمت' : 'Done Inspections',
+                  ),
                 ],
               ),
             ),
             Expanded(
               child: tasksAsync.when(
                 loading: () => const _LoadingList(),
-                error: (e, _) => _ErrorState(message: e.toString(), onRetry: _refreshAll),
+                error: (e, _) => _ErrorState(
+                  message: e.toString(),
+                  onRetry: _refreshAll,
+                ),
                 data: (tasks) => TabBarView(
                   controller: _tabs,
                   children: _tabsStatus.map((status) {
                     if (status == 'INSPECTIONS') {
-                      return inspectionsAsync.when(
+                      return filteredInspectionsAsync.when(
                         loading: () => const _LoadingList(),
-                        error: (e, _) => _ErrorState(message: e.toString(), onRetry: _refreshAll),
+                        error: (e, _) => _ErrorState(
+                          message: e.toString(),
+                          onRetry: _refreshAll,
+                        ),
                         data: (inspections) => _InspectionList(
                           inspections: inspections,
                           search: _search,
@@ -286,9 +334,12 @@ class _AdminTasksScreenState extends ConsumerState<AdminTasksScreen>
               ),
               CreateTaskForm(
                 onSubmit: (req) async {
-                  await ref.read(adminRepoProvider).createTask(req);
+                  await ref.read(adminRepoProvider).createTask(req, createdById: '');
                   _refreshAll();
-                  if (mounted) Navigator.pop(context);
+
+                  if (mounted) {
+                    Navigator.pop(context);
+                  }
                 },
                 onCancel: () => Navigator.pop(context),
               ),
@@ -332,7 +383,10 @@ class _Header extends StatelessWidget {
       ),
       child: Row(
         children: [
-          _IconButtonLite(icon: Icons.arrow_back_ios_new_rounded, onTap: onBack),
+          _IconButtonLite(
+            icon: Icons.arrow_back_ios_new_rounded,
+            onTap: onBack,
+          ),
           const SizedBox(width: 10),
           Container(
             width: 46,
@@ -341,7 +395,10 @@ class _Header extends StatelessWidget {
               color: Colors.white.withOpacity(0.12),
               borderRadius: BorderRadius.circular(16),
             ),
-            child: const Icon(Icons.task_alt_rounded, color: Colors.white),
+            child: const Icon(
+              Icons.task_alt_rounded,
+              color: Colors.white,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -371,16 +428,24 @@ class _Header extends StatelessWidget {
             ),
           ),
           _IconButtonLite(
-            icon: showFilters ? Icons.filter_list_off_rounded : Icons.filter_list_rounded,
+            icon: showFilters
+                ? Icons.filter_list_off_rounded
+                : Icons.filter_list_rounded,
             badge: activeFilterCount,
             active: showFilters || activeFilterCount > 0,
             onTap: onToggleFilters,
           ),
           const SizedBox(width: 6),
-          _IconButtonLite(icon: Icons.refresh_rounded, onTap: onRefresh),
+          _IconButtonLite(
+            icon: Icons.refresh_rounded,
+            onTap: onRefresh,
+          ),
           if (onCreate != null) ...[
             const SizedBox(width: 6),
-            _IconButtonLite(icon: Icons.add_rounded, onTap: onCreate!),
+            _IconButtonLite(
+              icon: Icons.add_rounded,
+              onTap: onCreate!,
+            ),
           ],
         ],
       ),
@@ -404,24 +469,68 @@ class _SummaryBar extends StatelessWidget {
     final tasks = tasksAsync.valueOrNull ?? [];
     final inspections = inspectionsAsync.valueOrNull ?? [];
 
-    int countTask(String s) => tasks.where((t) => t.status.toUpperCase() == s).length;
+    int countTask(String s) {
+      return tasks.where((t) => t.status.toUpperCase() == s).length;
+    }
+
     final urgent = tasks.where((t) {
-      return t.isUrgent || t.isEmergency || t.priority.toUpperCase() == 'URGENT';
+      return t.isUrgent ||
+          t.isEmergency ||
+          t.priority.toUpperCase() == 'URGENT' ||
+          t.status.toUpperCase() == 'URGENT';
     }).length;
 
-    final okInspections = inspections.where((i) => i.inspectionStatus.toUpperCase() == 'OK').length;
+    final okInspections = inspections.where((i) {
+      return i.inspectionStatus.toUpperCase() == 'OK';
+    }).length;
 
     return Container(
       color: Colors.white,
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 10),
       child: Row(
         children: [
-          Expanded(child: _MiniMetric(label: isAr ? 'كل المهام' : 'Tasks', value: tasks.length, color: const Color(0xFF1A237E))),
-          Expanded(child: _MiniMetric(label: isAr ? 'تمت' : 'Done', value: countTask('COMPLETED'), color: const Color(0xFF16A34A))),
-          Expanded(child: _MiniMetric(label: isAr ? 'جارية' : 'Running', value: countTask('IN_PROGRESS'), color: const Color(0xFF0284C7))),
-          Expanded(child: _MiniMetric(label: isAr ? 'طارئة' : 'Urgent', value: urgent, color: const Color(0xFFDC2626))),
-          Expanded(child: _MiniMetric(label: isAr ? 'تفتيش' : 'Inspections', value: inspections.length, color: const Color(0xFF7C3AED))),
-          Expanded(child: _MiniMetric(label: isAr ? 'سليم' : 'OK', value: okInspections, color: const Color(0xFF059669))),
+          Expanded(
+            child: _MiniMetric(
+              label: isAr ? 'كل المهام' : 'Tasks',
+              value: tasks.length,
+              color: const Color(0xFF1A237E),
+            ),
+          ),
+          Expanded(
+            child: _MiniMetric(
+              label: isAr ? 'تمت' : 'Done',
+              value: countTask('COMPLETED'),
+              color: const Color(0xFF16A34A),
+            ),
+          ),
+          Expanded(
+            child: _MiniMetric(
+              label: isAr ? 'جارية' : 'Running',
+              value: countTask('IN_PROGRESS'),
+              color: const Color(0xFF0284C7),
+            ),
+          ),
+          Expanded(
+            child: _MiniMetric(
+              label: isAr ? 'طارئة' : 'Urgent',
+              value: urgent,
+              color: const Color(0xFFDC2626),
+            ),
+          ),
+          Expanded(
+            child: _MiniMetric(
+              label: isAr ? 'تفتيش' : 'Inspections',
+              value: inspections.length,
+              color: const Color(0xFF7C3AED),
+            ),
+          ),
+          Expanded(
+            child: _MiniMetric(
+              label: isAr ? 'سليم' : 'OK',
+              value: okInspections,
+              color: const Color(0xFF059669),
+            ),
+          ),
         ],
       ),
     );
@@ -518,6 +627,7 @@ class _FiltersPanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isAr = AppLocalizations.of(context).isAr;
+
     final technicians = techniciansAsync.valueOrNull ?? [];
     final devices = devicesAsync.valueOrNull ?? [];
     final locations = locationsAsync.valueOrNull ?? [];
@@ -565,18 +675,26 @@ class _FiltersPanel extends StatelessWidget {
             children: [
               Expanded(
                 child: _Drop<String>(
-                  value: technicians.any((e) => e.id == filterTechId) ? filterTechId : null,
+                  value: technicians.any((e) => e.id == filterTechId)
+                      ? filterTechId
+                      : null,
                   hint: isAr ? 'الفنيين فقط' : 'Technicians only',
-                  items: technicians.map((t) => _DropItem(t.id, t.fullName)).toList(),
+                  items: technicians.map((t) {
+                    return _DropItem(t.id, t.fullName);
+                  }).toList(),
                   onChanged: onTech,
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
                 child: _Drop<String>(
-                  value: devices.any((e) => e.id == filterDeviceId) ? filterDeviceId : null,
+                  value: devices.any((e) => e.id == filterDeviceId)
+                      ? filterDeviceId
+                      : null,
                   hint: isAr ? 'الجهاز' : 'Device',
-                  items: devices.map((d) => _DropItem(d.id, '${d.name} (${d.deviceCode})')).toList(),
+                  items: devices.map((d) {
+                    return _DropItem(d.id, '${d.name} (${d.deviceCode})');
+                  }).toList(),
                   onChanged: onDevice,
                 ),
               ),
@@ -596,7 +714,9 @@ class _FiltersPanel extends StatelessWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: _Drop<String>(
-                  value: buildings.contains(filterBuilding) ? filterBuilding : null,
+                  value: buildings.contains(filterBuilding)
+                      ? filterBuilding
+                      : null,
                   hint: isAr ? 'المبنى' : 'Building',
                   items: buildings.map((e) => _DropItem(e, e)).toList(),
                   onChanged: onBuilding,
@@ -606,9 +726,13 @@ class _FiltersPanel extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           _Drop<String>(
-            value: _inspectionStatuses.any((e) => e.value == inspectionStatus) ? inspectionStatus : null,
+            value: _inspectionStatuses.any((e) => e.value == inspectionStatus)
+                ? inspectionStatus
+                : null,
             hint: isAr ? 'فلتر حالة التفتيش' : 'Inspection status filter',
-            items: _inspectionStatuses.map((e) => _DropItem(e.value, isAr ? e.ar : e.en)).toList(),
+            items: _inspectionStatuses.map((e) {
+              return _DropItem(e.value, isAr ? e.ar : e.en);
+            }).toList(),
             onChanged: onInspectionStatus,
           ),
           if (activeFilterCount > 0) ...[
@@ -654,11 +778,15 @@ class _TaskList extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isAr = AppLocalizations.of(context).isAr;
+
     final devices = ref.watch(adminDevicesProvider(null)).valueOrNull ?? [];
     final locations = ref.watch(locationsProvider).valueOrNull ?? [];
+
     final filtered = _filter(tasks, devices, locations);
 
-    if (filtered.isEmpty) return _EmptyTasks(isAr: isAr, status: status);
+    if (filtered.isEmpty) {
+      return _EmptyTasks(isAr: isAr, status: status);
+    }
 
     return RefreshIndicator(
       onRefresh: () async => onRefresh(),
@@ -668,11 +796,12 @@ class _TaskList extends ConsumerWidget {
         separatorBuilder: (_, __) => const SizedBox(height: 10),
         itemBuilder: (_, i) {
           final task = filtered[i];
+
           return _TaskCard(
             task: task,
             isAr: isAr,
             index: i,
-            onTap: () => _openTaskSheet(context, ref, task),
+            onTap: () => _openTaskSheet(context, task),
           );
         },
       ),
@@ -685,8 +814,10 @@ class _TaskList extends ConsumerWidget {
     List<LocationModel> locations,
   ) {
     final q = search.trim().toLowerCase();
+
     return list.where((t) {
       final s = t.status.toUpperCase();
+
       final urgent = t.isUrgent ||
           t.isEmergency ||
           t.priority.toUpperCase() == 'URGENT' ||
@@ -700,16 +831,27 @@ class _TaskList extends ConsumerWidget {
         }
       }
 
-      if (filterTechId != null && t.assignedToId != filterTechId) return false;
-      if (filterDeviceId != null && t.deviceId != filterDeviceId) return false;
+      if (filterTechId != null && t.assignedToId != filterTechId) {
+        return false;
+      }
+
+      if (filterDeviceId != null && t.deviceId != filterDeviceId) {
+        return false;
+      }
 
       final device = devices.firstWhereOrNull((d) => d.id == t.deviceId);
+
       final loc = locations.firstWhereOrNull((l) {
         return l.id == t.locationId || l.id == device?.locationId;
       });
 
-      if (filterCluster != null && loc?.cluster != filterCluster) return false;
-      if (filterBuilding != null && loc?.building != filterBuilding) return false;
+      if (filterCluster != null && loc?.cluster != filterCluster) {
+        return false;
+      }
+
+      if (filterBuilding != null && loc?.building != filterBuilding) {
+        return false;
+      }
 
       if (q.isNotEmpty) {
         final haystack = [
@@ -726,8 +868,12 @@ class _TaskList extends ConsumerWidget {
           loc?.cluster ?? '',
           loc?.building ?? '',
         ].join(' ').toLowerCase();
-        if (!haystack.contains(q)) return false;
+
+        if (!haystack.contains(q)) {
+          return false;
+        }
       }
+
       return true;
     }).toList()
       ..sort((a, b) {
@@ -736,7 +882,7 @@ class _TaskList extends ConsumerWidget {
       });
   }
 
-  void _openTaskSheet(BuildContext context, WidgetRef ref, TaskModel task) {
+  void _openTaskSheet(BuildContext context, TaskModel task) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -766,7 +912,11 @@ class _TaskCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = task.status.toUpperCase();
-    final urgent = task.isUrgent || task.isEmergency || task.priority.toUpperCase() == 'URGENT';
+
+    final urgent = task.isUrgent ||
+        task.isEmergency ||
+        task.priority.toUpperCase() == 'URGENT';
+
     final color = urgent
         ? const Color(0xFFDC2626)
         : s == 'COMPLETED'
@@ -786,7 +936,10 @@ class _TaskCard extends StatelessWidget {
         child: Container(
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: color.withOpacity(0.18), width: urgent ? 1.4 : 1),
+            border: Border.all(
+              color: color.withOpacity(0.18),
+              width: urgent ? 1.4 : 1,
+            ),
             boxShadow: [
               BoxShadow(
                 color: color.withOpacity(0.05),
@@ -802,7 +955,9 @@ class _TaskCard extends StatelessWidget {
                 height: 124,
                 decoration: BoxDecoration(
                   color: color,
-                  borderRadius: const BorderRadius.horizontal(left: Radius.circular(18)),
+                  borderRadius: const BorderRadius.horizontal(
+                    left: Radius.circular(18),
+                  ),
                 ),
               ),
               Expanded(
@@ -827,7 +982,10 @@ class _TaskCard extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          _Pill(text: isAr ? task.statusAr : task.statusEn, color: color),
+                          _Pill(
+                            text: isAr ? task.statusAr : task.statusEn,
+                            color: color,
+                          ),
                         ],
                       ),
                       if (task.description.trim().isNotEmpty) ...[
@@ -848,17 +1006,42 @@ class _TaskCard extends StatelessWidget {
                         spacing: 6,
                         runSpacing: 6,
                         children: [
-                          _MiniInfo(icon: Icons.person_rounded, text: task.assignedToName ?? (isAr ? 'بدون فني' : 'Unassigned')),
-                          if (task.deviceName != null) _MiniInfo(icon: Icons.devices_rounded, text: task.deviceName!),
-                          if (task.deviceCode != null) _MiniInfo(icon: Icons.qr_code_rounded, text: task.deviceCode!),
-                          if (task.locationName != null) _MiniInfo(icon: Icons.place_rounded, text: task.locationName!),
-                          _Pill(text: isAr ? task.priorityAr : task.priority, color: urgent ? const Color(0xFFDC2626) : const Color(0xFF475569)),
+                          _MiniInfo(
+                            icon: Icons.person_rounded,
+                            text: task.assignedToName ??
+                                (isAr ? 'بدون فني' : 'Unassigned'),
+                          ),
+                          if (task.deviceName != null)
+                            _MiniInfo(
+                              icon: Icons.devices_rounded,
+                              text: task.deviceName!,
+                            ),
+                          if (task.deviceCode != null)
+                            _MiniInfo(
+                              icon: Icons.qr_code_rounded,
+                              text: task.deviceCode!,
+                            ),
+                          if (task.locationName != null)
+                            _MiniInfo(
+                              icon: Icons.place_rounded,
+                              text: task.locationName!,
+                            ),
+                          _Pill(
+                            text: isAr ? task.priorityAr : task.priority,
+                            color: urgent
+                                ? const Color(0xFFDC2626)
+                                : const Color(0xFF475569),
+                          ),
                         ],
                       ),
                       const SizedBox(height: 8),
                       Row(
                         children: [
-                          Icon(Icons.schedule_rounded, size: 13, color: Colors.grey.shade500),
+                          Icon(
+                            Icons.schedule_rounded,
+                            size: 13,
+                            color: Colors.grey.shade500,
+                          ),
                           const SizedBox(width: 4),
                           Text(
                             task.completedAt != null
@@ -884,7 +1067,10 @@ class _TaskCard extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: 4),
-                          const Icon(Icons.chevron_right_rounded, color: Color(0xFFCBD5E1)),
+                          const Icon(
+                            Icons.chevron_right_rounded,
+                            color: Color(0xFFCBD5E1),
+                          ),
                         ],
                       ),
                     ],
@@ -895,7 +1081,12 @@ class _TaskCard extends StatelessWidget {
           ),
         ),
       ),
-    ).animate(delay: Duration(milliseconds: (index * 25).clamp(0, 250))).fadeIn(duration: 220.ms).slideY(begin: 0.03);
+    )
+        .animate(
+          delay: Duration(milliseconds: (index * 25).clamp(0, 250)),
+        )
+        .fadeIn(duration: 220.ms)
+        .slideY(begin: 0.03);
   }
 }
 
@@ -917,6 +1108,7 @@ class _InspectionList extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isAr = AppLocalizations.of(context).isAr;
+
     final locations = ref.watch(locationsProvider).valueOrNull ?? [];
     final filtered = _filter(inspections, locations);
 
@@ -936,6 +1128,7 @@ class _InspectionList extends ConsumerWidget {
         separatorBuilder: (_, __) => const SizedBox(height: 10),
         itemBuilder: (_, i) {
           final inspection = filtered[i];
+
           return _InspectionCard(
             inspection: inspection,
             isAr: isAr,
@@ -956,13 +1149,24 @@ class _InspectionList extends ConsumerWidget {
     return list.where((i) {
       if (filterCluster != null || filterBuilding != null) {
         final matchLocation = locations.firstWhereOrNull((l) {
-          final text = '${i.locationText} ${i.deviceName} ${i.deviceCode}'.toLowerCase();
-          final name = '${l.name} ${l.cluster ?? ''} ${l.building ?? ''}'.toLowerCase();
-          return text.contains(l.name.toLowerCase()) || name.contains(i.locationText.toLowerCase());
+          final text = '${i.locationText} ${i.deviceName} ${i.deviceCode}'
+              .toLowerCase();
+
+          final name = '${l.name} ${l.cluster ?? ''} ${l.building ?? ''}'
+              .toLowerCase();
+
+          return text.contains(l.name.toLowerCase()) ||
+              name.contains(i.locationText.toLowerCase());
         });
 
-        if (filterCluster != null && matchLocation?.cluster != filterCluster) return false;
-        if (filterBuilding != null && matchLocation?.building != filterBuilding) return false;
+        if (filterCluster != null && matchLocation?.cluster != filterCluster) {
+          return false;
+        }
+
+        if (filterBuilding != null &&
+            matchLocation?.building != filterBuilding) {
+          return false;
+        }
       }
 
       if (q.isNotEmpty) {
@@ -977,14 +1181,21 @@ class _InspectionList extends ConsumerWidget {
           i.notes ?? '',
           i.issueReason ?? '',
         ].join(' ').toLowerCase();
-        if (!haystack.contains(q)) return false;
+
+        if (!haystack.contains(q)) {
+          return false;
+        }
       }
+
       return true;
     }).toList()
       ..sort((a, b) => b.inspectedAt.compareTo(a.inspectedAt));
   }
 
-  void _openInspectionSheet(BuildContext context, InspectionDetail inspection) {
+  void _openInspectionSheet(
+    BuildContext context,
+    InspectionDetail inspection,
+  ) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1036,7 +1247,9 @@ class _InspectionCard extends StatelessWidget {
                 height: 120,
                 decoration: BoxDecoration(
                   color: color,
-                  borderRadius: const BorderRadius.horizontal(left: Radius.circular(18)),
+                  borderRadius: const BorderRadius.horizontal(
+                    left: Radius.circular(18),
+                  ),
                 ),
               ),
               Expanded(
@@ -1061,7 +1274,12 @@ class _InspectionCard extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          _Pill(text: isAr ? inspection.statusAr : inspection.inspectionStatus, color: color),
+                          _Pill(
+                            text: isAr
+                                ? inspection.statusAr
+                                : inspection.inspectionStatus,
+                            color: color,
+                          ),
                         ],
                       ),
                       const SizedBox(height: 8),
@@ -1069,17 +1287,33 @@ class _InspectionCard extends StatelessWidget {
                         spacing: 6,
                         runSpacing: 6,
                         children: [
-                          _MiniInfo(icon: Icons.confirmation_number_rounded, text: inspection.reportNumber),
-                          _MiniInfo(icon: Icons.person_rounded, text: inspection.technicianName),
-                          _MiniInfo(icon: Icons.qr_code_rounded, text: inspection.deviceCode),
+                          _MiniInfo(
+                            icon: Icons.confirmation_number_rounded,
+                            text: inspection.reportNumber,
+                          ),
+                          _MiniInfo(
+                            icon: Icons.person_rounded,
+                            text: inspection.technicianName,
+                          ),
+                          _MiniInfo(
+                            icon: Icons.qr_code_rounded,
+                            text: inspection.deviceCode,
+                          ),
                           if (inspection.locationText.trim().isNotEmpty)
-                            _MiniInfo(icon: Icons.place_rounded, text: inspection.locationText),
+                            _MiniInfo(
+                              icon: Icons.place_rounded,
+                              text: inspection.locationText,
+                            ),
                         ],
                       ),
                       const SizedBox(height: 9),
                       Row(
                         children: [
-                          Icon(Icons.event_available_rounded, size: 13, color: Colors.grey.shade500),
+                          Icon(
+                            Icons.event_available_rounded,
+                            size: 13,
+                            color: Colors.grey.shade500,
+                          ),
                           const SizedBox(width: 4),
                           Text(
                             '${isAr ? 'تم التفتيش' : 'Inspected'}: ${_dateTime(inspection.inspectedAt)}',
@@ -1091,10 +1325,18 @@ class _InspectionCard extends StatelessWidget {
                             ),
                           ),
                           const Spacer(),
-                          if (inspection.imageUrl != null && inspection.imageUrl!.trim().isNotEmpty)
-                            Icon(Icons.image_rounded, size: 17, color: color),
+                          if (inspection.imageUrl != null &&
+                              inspection.imageUrl!.trim().isNotEmpty)
+                            Icon(
+                              Icons.image_rounded,
+                              size: 17,
+                              color: color,
+                            ),
                           const SizedBox(width: 4),
-                          const Icon(Icons.chevron_right_rounded, color: Color(0xFFCBD5E1)),
+                          const Icon(
+                            Icons.chevron_right_rounded,
+                            color: Color(0xFFCBD5E1),
+                          ),
                         ],
                       ),
                     ],
@@ -1105,7 +1347,12 @@ class _InspectionCard extends StatelessWidget {
           ),
         ),
       ),
-    ).animate(delay: Duration(milliseconds: (index * 25).clamp(0, 250))).fadeIn(duration: 220.ms).slideY(begin: 0.03);
+    )
+        .animate(
+          delay: Duration(milliseconds: (index * 25).clamp(0, 250)),
+        )
+        .fadeIn(duration: 220.ms)
+        .slideY(begin: 0.03);
   }
 }
 
@@ -1123,11 +1370,10 @@ class _TaskInspectionSheet extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final isAr = AppLocalizations.of(context).isAr;
-    final inspectionsAsync = ref.watch(
-      adminInspectionsProvider(
-        AdminInspectionFilter(deviceId: task.deviceId),
-      ),
-    );
+
+    // نجيب كل التفتيشات ونفلتر محليًا بدقة:
+    // نفس الجهاز + نفس الفني + بعد إنشاء المهمة
+    final inspectionsAsync = ref.watch(monthlyInspectionsProvider);
 
     return DraggableScrollableSheet(
       initialChildSize: 0.84,
@@ -1160,24 +1406,64 @@ class _TaskInspectionSheet extends ConsumerWidget {
                 title: isAr ? 'تفاصيل المهمة' : 'Task Details',
                 icon: Icons.assignment_rounded,
                 children: [
-                  _InfoRow(label: isAr ? 'العنوان' : 'Title', value: task.title),
-                  _InfoRow(label: isAr ? 'الحالة' : 'Status', value: isAr ? task.statusAr : task.statusEn),
-                  _InfoRow(label: isAr ? 'الأولوية' : 'Priority', value: isAr ? task.priorityAr : task.priority),
-                  _InfoRow(label: isAr ? 'أُرسلت إلى' : 'Assigned to', value: task.assignedToName ?? (isAr ? 'غير محدد' : 'Unassigned')),
+                  _InfoRow(
+                    label: isAr ? 'العنوان' : 'Title',
+                    value: task.title,
+                  ),
+                  _InfoRow(
+                    label: isAr ? 'الحالة' : 'Status',
+                    value: isAr ? task.statusAr : task.statusEn,
+                  ),
+                  _InfoRow(
+                    label: isAr ? 'الأولوية' : 'Priority',
+                    value: isAr ? task.priorityAr : task.priority,
+                  ),
+                  _InfoRow(
+                    label: isAr ? 'أُرسلت إلى' : 'Assigned to',
+                    value:
+                        task.assignedToName ?? (isAr ? 'غير محدد' : 'Unassigned'),
+                  ),
                   if (task.assignedToEmail != null)
-                    _InfoRow(label: isAr ? 'إيميل الفني' : 'Technician Email', value: task.assignedToEmail!),
-                  _InfoRow(label: isAr ? 'الجهاز' : 'Device', value: task.deviceName ?? '-'),
-                  _InfoRow(label: isAr ? 'كود الجهاز' : 'Device Code', value: task.deviceCode ?? '-'),
-                  _InfoRow(label: isAr ? 'الموقع' : 'Location', value: task.locationName ?? '-'),
-                  _InfoRow(label: isAr ? 'تاريخ الإنشاء' : 'Created', value: _dateTime(task.createdAt)),
+                    _InfoRow(
+                      label: isAr ? 'إيميل الفني' : 'Technician Email',
+                      value: task.assignedToEmail!,
+                    ),
+                  _InfoRow(
+                    label: isAr ? 'الجهاز' : 'Device',
+                    value: task.deviceName ?? '-',
+                  ),
+                  _InfoRow(
+                    label: isAr ? 'كود الجهاز' : 'Device Code',
+                    value: task.deviceCode ?? '-',
+                  ),
+                  _InfoRow(
+                    label: isAr ? 'الموقع' : 'Location',
+                    value: task.locationName ?? '-',
+                  ),
+                  _InfoRow(
+                    label: isAr ? 'تاريخ الإنشاء' : 'Created',
+                    value: _dateTime(task.createdAt),
+                  ),
                   if (task.dueDate != null)
-                    _InfoRow(label: isAr ? 'موعد التنفيذ' : 'Due Date', value: _dateTime(task.dueDate!)),
+                    _InfoRow(
+                      label: isAr ? 'موعد التنفيذ' : 'Due Date',
+                      value: _dateTime(task.dueDate!),
+                    ),
                   if (task.completedAt != null)
-                    _InfoRow(label: isAr ? 'تاريخ الإكمال' : 'Completed At', value: _dateTime(task.completedAt!)),
+                    _InfoRow(
+                      label: isAr ? 'تاريخ الإكمال' : 'Completed At',
+                      value: _dateTime(task.completedAt!),
+                    ),
                   if (task.description.trim().isNotEmpty)
-                    _InfoRow(label: isAr ? 'الوصف' : 'Description', value: task.description),
+                    _InfoRow(
+                      label: isAr ? 'الوصف' : 'Description',
+                      value: task.description,
+                    ),
                   if ((task.notes ?? '').trim().isNotEmpty)
-                    _InfoRow(label: isAr ? 'ملاحظات' : 'Notes', value: task.notes!),
+                    _InfoRow(
+                      label: isAr ? 'ملاحظات' : 'Notes',
+                      value: task.notes!,
+                    ),
                 ],
               ),
               const SizedBox(height: 14),
@@ -1195,12 +1481,11 @@ class _TaskInspectionSheet extends ConsumerWidget {
                 loading: () => const _SmallLoadingCard(),
                 error: (e, _) => _InlineError(
                   message: e.toString(),
-                  onRetry: () => ref.invalidate(
-                    adminInspectionsProvider(AdminInspectionFilter(deviceId: task.deviceId)),
-                  ),
+                  onRetry: () => ref.invalidate(monthlyInspectionsProvider),
                 ),
                 data: (items) {
                   final related = _relatedInspections(task, items);
+
                   if (related.isEmpty) {
                     return _NoInspectionBox(isAr: isAr);
                   }
@@ -1222,7 +1507,9 @@ class _TaskInspectionSheet extends ConsumerWidget {
                               context: context,
                               isScrollControlled: true,
                               backgroundColor: Colors.transparent,
-                              builder: (_) => _InspectionDetailSheet(inspection: inspection),
+                              builder: (_) => _InspectionDetailSheet(
+                                inspection: inspection,
+                              ),
                             ),
                           ),
                         );
@@ -1272,7 +1559,11 @@ class _TaskStatusHero extends StatelessWidget {
               color: color.withOpacity(0.14),
               borderRadius: BorderRadius.circular(18),
             ),
-            child: Icon(_taskIcon(task), color: color, size: 28),
+            child: Icon(
+              _taskIcon(task),
+              color: color,
+              size: 28,
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -1355,10 +1646,18 @@ class _TaskActions extends ConsumerWidget {
     );
   }
 
-  Future<void> _update(BuildContext context, WidgetRef ref, String status) async {
+  Future<void> _update(
+    BuildContext context,
+    WidgetRef ref,
+    String status,
+  ) async {
     await ref.read(adminRepoProvider).updateTask(task.id, {'status': status});
+
     onRefresh();
-    if (context.mounted) Navigator.pop(context);
+
+    if (context.mounted) {
+      Navigator.pop(context);
+    }
   }
 }
 
@@ -1413,6 +1712,7 @@ class _InspectionDoneBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = _inspectionColor(last.inspectionStatus);
+
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -1427,8 +1727,8 @@ class _InspectionDoneBox extends StatelessWidget {
           Expanded(
             child: Text(
               isAr
-                  ? 'تم الفحص: يوجد $count تقرير تفتيش مرتبط. آخر حالة: ${last.statusAr}'
-                  : 'Inspected: $count linked inspection report(s). Last status: ${last.inspectionStatus}',
+                  ? 'تم الفحص: يوجد $count تقرير تفتيش مرتبط بنفس الفني والجهاز. آخر حالة: ${last.statusAr}'
+                  : 'Inspected: $count linked report(s) for the same technician and device. Last status: ${last.inspectionStatus}',
               style: TextStyle(
                 fontFamily: 'Cairo',
                 color: color,
@@ -1455,17 +1755,23 @@ class _NoInspectionBox extends StatelessWidget {
       decoration: BoxDecoration(
         color: const Color(0xFFFFFBEB),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFF59E0B).withOpacity(0.25)),
+        border: Border.all(
+          color: const Color(0xFFF59E0B).withOpacity(0.25),
+        ),
       ),
       child: Row(
         children: [
-          const Icon(Icons.pending_actions_rounded, color: Color(0xFFF59E0B), size: 28),
+          const Icon(
+            Icons.pending_actions_rounded,
+            color: Color(0xFFF59E0B),
+            size: 28,
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               isAr
-                  ? 'لسه مفيش تفتيش متسجل على هذه المهمة/الجهاز من الباك إند.'
-                  : 'No backend inspection has been recorded for this task/device yet.',
+                  ? 'لسه مفيش تفتيش متسجل لنفس الجهاز بواسطة نفس الفني بعد إنشاء هذه المهمة.'
+                  : 'No inspection has been recorded for the same device by the same technician after this task was created.',
               style: const TextStyle(
                 fontFamily: 'Cairo',
                 color: Color(0xFF92400E),
@@ -1492,6 +1798,7 @@ class _LinkedInspectionTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = _inspectionColor(inspection.inspectionStatus);
+
     return Material(
       color: Colors.white,
       borderRadius: BorderRadius.circular(16),
@@ -1508,7 +1815,11 @@ class _LinkedInspectionTile extends StatelessWidget {
             children: [
               CircleAvatar(
                 backgroundColor: color.withOpacity(0.10),
-                child: Icon(Icons.fact_check_rounded, color: color, size: 18),
+                child: Icon(
+                  Icons.fact_check_rounded,
+                  color: color,
+                  size: 18,
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -1534,7 +1845,10 @@ class _LinkedInspectionTile extends StatelessWidget {
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right_rounded, color: Color(0xFFCBD5E1)),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Color(0xFFCBD5E1),
+              ),
             ],
           ),
         ),
@@ -1587,7 +1901,11 @@ class _InspectionDetailSheet extends StatelessWidget {
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.fact_check_rounded, color: color, size: 32),
+                    Icon(
+                      Icons.fact_check_rounded,
+                      color: color,
+                      size: 32,
+                    ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Column(
@@ -1621,21 +1939,53 @@ class _InspectionDetailSheet extends StatelessWidget {
                 title: isAr ? 'تفاصيل التفتيش' : 'Inspection Details',
                 icon: Icons.assignment_turned_in_rounded,
                 children: [
-                  _InfoRow(label: isAr ? 'رقم التقرير' : 'Report', value: inspection.reportNumber),
-                  _InfoRow(label: isAr ? 'الحالة' : 'Status', value: isAr ? inspection.statusAr : inspection.inspectionStatus),
-                  _InfoRow(label: isAr ? 'الفني' : 'Technician', value: inspection.technicianName),
-                  _InfoRow(label: isAr ? 'الجهاز' : 'Device', value: inspection.deviceName),
-                  _InfoRow(label: isAr ? 'كود الجهاز' : 'Device Code', value: inspection.deviceCode),
-                  _InfoRow(label: isAr ? 'الموقع' : 'Location', value: inspection.locationText),
-                  _InfoRow(label: isAr ? 'التاريخ' : 'Date', value: _dateTime(inspection.inspectedAt)),
-                  _InfoRow(label: 'GPS', value: '${inspection.latitude.toStringAsFixed(4)}, ${inspection.longitude.toStringAsFixed(4)}'),
+                  _InfoRow(
+                    label: isAr ? 'رقم التقرير' : 'Report',
+                    value: inspection.reportNumber,
+                  ),
+                  _InfoRow(
+                    label: isAr ? 'الحالة' : 'Status',
+                    value: isAr ? inspection.statusAr : inspection.inspectionStatus,
+                  ),
+                  _InfoRow(
+                    label: isAr ? 'الفني' : 'Technician',
+                    value: inspection.technicianName,
+                  ),
+                  _InfoRow(
+                    label: isAr ? 'الجهاز' : 'Device',
+                    value: inspection.deviceName,
+                  ),
+                  _InfoRow(
+                    label: isAr ? 'كود الجهاز' : 'Device Code',
+                    value: inspection.deviceCode,
+                  ),
+                  _InfoRow(
+                    label: isAr ? 'الموقع' : 'Location',
+                    value: inspection.locationText,
+                  ),
+                  _InfoRow(
+                    label: isAr ? 'التاريخ' : 'Date',
+                    value: _dateTime(inspection.inspectedAt),
+                  ),
+                  _InfoRow(
+                    label: 'GPS',
+                    value:
+                        '${inspection.latitude.toStringAsFixed(4)}, ${inspection.longitude.toStringAsFixed(4)}',
+                  ),
                   if ((inspection.issueReason ?? '').trim().isNotEmpty)
-                    _InfoRow(label: isAr ? 'سبب المشكلة' : 'Issue Reason', value: inspection.issueReason!),
+                    _InfoRow(
+                      label: isAr ? 'سبب المشكلة' : 'Issue Reason',
+                      value: inspection.issueReason!,
+                    ),
                   if ((inspection.notes ?? '').trim().isNotEmpty)
-                    _InfoRow(label: isAr ? 'ملاحظات' : 'Notes', value: inspection.notes!),
+                    _InfoRow(
+                      label: isAr ? 'ملاحظات' : 'Notes',
+                      value: inspection.notes!,
+                    ),
                 ],
               ),
-              if (inspection.imageUrl != null && inspection.imageUrl!.trim().isNotEmpty) ...[
+              if (inspection.imageUrl != null &&
+                  inspection.imageUrl!.trim().isNotEmpty) ...[
                 const SizedBox(height: 14),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(18),
@@ -1648,7 +1998,11 @@ class _InspectionDetailSheet extends StatelessWidget {
                       height: 140,
                       color: const Color(0xFFF1F5F9),
                       alignment: Alignment.center,
-                      child: const Icon(Icons.image_not_supported_rounded, size: 42, color: Color(0xFF94A3B8)),
+                      child: const Icon(
+                        Icons.image_not_supported_rounded,
+                        size: 42,
+                        color: Color(0xFF94A3B8),
+                      ),
                     ),
                   ),
                 ),
@@ -1686,7 +2040,11 @@ class _DetailBlock extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
             child: Row(
               children: [
-                Icon(icon, color: const Color(0xFF1A237E), size: 18),
+                Icon(
+                  icon,
+                  color: const Color(0xFF1A237E),
+                  size: 18,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -1714,7 +2072,10 @@ class _InfoRow extends StatelessWidget {
   final String label;
   final String value;
 
-  const _InfoRow({required this.label, required this.value});
+  const _InfoRow({
+    required this.label,
+    required this.value,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1759,7 +2120,10 @@ class _MiniInfo extends StatelessWidget {
   final IconData icon;
   final String text;
 
-  const _MiniInfo({required this.icon, required this.text});
+  const _MiniInfo({
+    required this.icon,
+    required this.text,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1773,7 +2137,11 @@ class _MiniInfo extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 12, color: const Color(0xFF475569)),
+          Icon(
+            icon,
+            size: 12,
+            color: const Color(0xFF475569),
+          ),
           const SizedBox(width: 4),
           Flexible(
             child: Text(
@@ -1831,6 +2199,7 @@ class _CreateTaskFormState extends ConsumerState<CreateTaskForm> {
   @override
   Widget build(BuildContext context) {
     final isAr = AppLocalizations.of(context).isAr;
+
     final techs = ref.watch(activeTechniciansProvider).valueOrNull ?? [];
     final devices = ref.watch(adminDevicesProvider(null)).valueOrNull ?? [];
     final locations = ref.watch(locationsProvider).valueOrNull ?? [];
@@ -1852,39 +2221,67 @@ class _CreateTaskFormState extends ConsumerState<CreateTaskForm> {
           const SizedBox(height: 12),
           SwitchListTile(
             value: _isEmergency,
-            onChanged: (v) => setState(() {
-              _isEmergency = v;
-              if (v) _priority = 'URGENT';
-            }),
+            onChanged: (v) {
+              setState(() {
+                _isEmergency = v;
+
+                if (v) {
+                  _priority = 'URGENT';
+                }
+              });
+            },
             title: Text(
               isAr ? 'مهمة طارئة' : 'Emergency task',
-              style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.w800),
+              style: const TextStyle(
+                fontFamily: 'Cairo',
+                fontWeight: FontWeight.w800,
+              ),
             ),
             activeColor: const Color(0xFFDC2626),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-            tileColor: _isEmergency ? const Color(0xFFFEE2E2) : const Color(0xFFF1F5F9),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+            ),
+            tileColor:
+                _isEmergency ? const Color(0xFFFEE2E2) : const Color(0xFFF1F5F9),
           ),
           const SizedBox(height: 10),
-          _TextInput(controller: _title, label: isAr ? 'عنوان المهمة *' : 'Task title *', icon: Icons.title_rounded),
+          _TextInput(
+            controller: _title,
+            label: isAr ? 'عنوان المهمة *' : 'Task title *',
+            icon: Icons.title_rounded,
+          ),
           const SizedBox(height: 10),
-          _TextInput(controller: _desc, label: isAr ? 'الوصف' : 'Description', icon: Icons.description_rounded, maxLines: 2),
+          _TextInput(
+            controller: _desc,
+            label: isAr ? 'الوصف' : 'Description',
+            icon: Icons.description_rounded,
+            maxLines: 2,
+          ),
           const SizedBox(height: 10),
           _Drop<String>(
             value: techs.any((e) => e.id == _techId) ? _techId : null,
             hint: isAr ? 'اختاري فني نشط *' : 'Select active technician *',
-            items: techs.map((t) => _DropItem(t.id, '${t.fullName} — ${t.username}')).toList(),
+            items: techs.map((t) {
+              return _DropItem(t.id, '${t.fullName} — ${t.username}');
+            }).toList(),
             onChanged: (v) => setState(() => _techId = v),
           ),
           const SizedBox(height: 10),
           _Drop<String>(
             value: devices.any((e) => e.id == _deviceId) ? _deviceId : null,
             hint: isAr ? 'الجهاز' : 'Device',
-            items: devices.map((d) => _DropItem(d.id, '${d.name} (${d.deviceCode})')).toList(),
+            items: devices.map((d) {
+              return _DropItem(d.id, '${d.name} (${d.deviceCode})');
+            }).toList(),
             onChanged: (v) {
               final device = devices.firstWhereOrNull((d) => d.id == v);
+
               setState(() {
                 _deviceId = v;
-                if (device?.locationId != null) _locationId = device!.locationId;
+
+                if (device?.locationId != null) {
+                  _locationId = device!.locationId;
+                }
               });
             },
           ),
@@ -1892,7 +2289,9 @@ class _CreateTaskFormState extends ConsumerState<CreateTaskForm> {
           _Drop<String>(
             value: locations.any((e) => e.id == _locationId) ? _locationId : null,
             hint: isAr ? 'الموقع' : 'Location',
-            items: locations.map((loc) => _DropItem(loc.id, loc.name)).toList(),
+            items: locations.map((loc) {
+              return _DropItem(loc.id, loc.name);
+            }).toList(),
             onChanged: (v) => setState(() => _locationId = v),
           ),
           const SizedBox(height: 10),
@@ -1905,10 +2304,15 @@ class _CreateTaskFormState extends ConsumerState<CreateTaskForm> {
               _DropItem('HIGH', isAr ? 'عالية' : 'High'),
               _DropItem('URGENT', isAr ? 'طارئة' : 'Urgent'),
             ],
-            onChanged: (v) => setState(() {
-              _priority = v ?? 'MEDIUM';
-              if (_priority == 'URGENT') _isEmergency = true;
-            }),
+            onChanged: (v) {
+              setState(() {
+                _priority = v ?? 'MEDIUM';
+
+                if (_priority == 'URGENT') {
+                  _isEmergency = true;
+                }
+              });
+            },
           ),
           const SizedBox(height: 10),
           InkWell(
@@ -1920,7 +2324,10 @@ class _CreateTaskFormState extends ConsumerState<CreateTaskForm> {
                 firstDate: DateTime.now(),
                 lastDate: DateTime.now().add(const Duration(days: 365)),
               );
-              if (picked != null) setState(() => _dueDate = picked);
+
+              if (picked != null) {
+                setState(() => _dueDate = picked);
+              }
             },
             child: Container(
               padding: const EdgeInsets.all(14),
@@ -1930,29 +2337,52 @@ class _CreateTaskFormState extends ConsumerState<CreateTaskForm> {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.calendar_today_rounded, size: 18, color: Color(0xFF1A237E)),
+                  const Icon(
+                    Icons.calendar_today_rounded,
+                    size: 18,
+                    color: Color(0xFF1A237E),
+                  ),
                   const SizedBox(width: 10),
                   Text(
                     '${isAr ? 'موعد التنفيذ' : 'Due date'}: ${_date(_dueDate)}',
-                    style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.w800),
+                    style: const TextStyle(
+                      fontFamily: 'Cairo',
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ],
               ),
             ),
           ),
           const SizedBox(height: 10),
-          _TextInput(controller: _notes, label: isAr ? 'ملاحظات' : 'Notes', icon: Icons.notes_rounded, maxLines: 2),
+          _TextInput(
+            controller: _notes,
+            label: isAr ? 'ملاحظات' : 'Notes',
+            icon: Icons.notes_rounded,
+            maxLines: 2,
+          ),
           const SizedBox(height: 16),
           Row(
             children: [
-              Expanded(child: OutlinedButton(onPressed: widget.onCancel, child: Text(isAr ? 'إلغاء' : 'Cancel'))),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: widget.onCancel,
+                  child: Text(isAr ? 'إلغاء' : 'Cancel'),
+                ),
+              ),
               const SizedBox(width: 10),
               Expanded(
                 flex: 2,
                 child: ElevatedButton(
-                  onPressed: _loading || _title.text.trim().isEmpty || _techId == null ? null : _submit,
+                  onPressed: _loading ||
+                          _title.text.trim().isEmpty ||
+                          _techId == null
+                      ? null
+                      : _submit,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: _isEmergency ? const Color(0xFFDC2626) : const Color(0xFF1A237E),
+                    backgroundColor: _isEmergency
+                        ? const Color(0xFFDC2626)
+                        : const Color(0xFF1A237E),
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 13),
                   ),
@@ -1960,7 +2390,10 @@ class _CreateTaskFormState extends ConsumerState<CreateTaskForm> {
                       ? const SizedBox(
                           width: 18,
                           height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
                         )
                       : Text(isAr ? 'إنشاء المهمة' : 'Create Task'),
                 ),
@@ -1974,6 +2407,7 @@ class _CreateTaskFormState extends ConsumerState<CreateTaskForm> {
 
   Future<void> _submit() async {
     setState(() => _loading = true);
+
     try {
       await widget.onSubmit(
         CreateTaskRequest(
@@ -1989,7 +2423,9 @@ class _CreateTaskFormState extends ConsumerState<CreateTaskForm> {
         ),
       );
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
   }
 }
@@ -2029,6 +2465,7 @@ class _TextInput extends StatelessWidget {
 class _DropItem<T> {
   final T value;
   final String label;
+
   const _DropItem(this.value, this.label);
 }
 
@@ -2056,14 +2493,26 @@ class _Drop<T> extends StatelessWidget {
       child: DropdownButtonHideUnderline(
         child: DropdownButton<T?>(
           value: value,
-          hint: Text(hint, overflow: TextOverflow.ellipsis),
+          hint: Text(
+            hint,
+            overflow: TextOverflow.ellipsis,
+          ),
           isExpanded: true,
           items: [
-            DropdownMenuItem<T?>(value: null, child: Text(hint, overflow: TextOverflow.ellipsis)),
+            DropdownMenuItem<T?>(
+              value: null,
+              child: Text(
+                hint,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
             ...items.map((e) {
               return DropdownMenuItem<T?>(
                 value: e.value,
-                child: Text(e.label, overflow: TextOverflow.ellipsis),
+                child: Text(
+                  e.label,
+                  overflow: TextOverflow.ellipsis,
+                ),
               );
             }),
           ],
@@ -2078,16 +2527,27 @@ class _Pill extends StatelessWidget {
   final String text;
   final Color color;
 
-  const _Pill({required this.text, required this.color});
+  const _Pill({
+    required this.text,
+    required this.color,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-      decoration: BoxDecoration(color: color.withOpacity(0.10), borderRadius: BorderRadius.circular(999)),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(999),
+      ),
       child: Text(
         text,
-        style: TextStyle(color: color, fontFamily: 'Cairo', fontSize: 10.5, fontWeight: FontWeight.w900),
+        style: TextStyle(
+          color: color,
+          fontFamily: 'Cairo',
+          fontSize: 10.5,
+          fontWeight: FontWeight.w900,
+        ),
       ),
     );
   }
@@ -2118,11 +2578,17 @@ class _IconButtonLite extends StatelessWidget {
             width: 42,
             height: 42,
             decoration: BoxDecoration(
-              color: active ? Colors.white.withOpacity(0.22) : Colors.white.withOpacity(0.10),
+              color: active
+                  ? Colors.white.withOpacity(0.22)
+                  : Colors.white.withOpacity(0.10),
               borderRadius: BorderRadius.circular(14),
               border: Border.all(color: Colors.white.withOpacity(0.12)),
             ),
-            child: Icon(icon, color: Colors.white, size: 20),
+            child: Icon(
+              icon,
+              color: Colors.white,
+              size: 20,
+            ),
           ),
           if (badge > 0)
             Positioned(
@@ -2133,7 +2599,11 @@ class _IconButtonLite extends StatelessWidget {
                 backgroundColor: const Color(0xFFF59E0B),
                 child: Text(
                   '$badge',
-                  style: const TextStyle(fontSize: 10, color: Colors.white, fontWeight: FontWeight.w900),
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ),
             ),
@@ -2145,16 +2615,24 @@ class _IconButtonLite extends StatelessWidget {
 
 class _LoadingList extends StatelessWidget {
   const _LoadingList();
+
   @override
-  Widget build(BuildContext context) => ListView.builder(
-        padding: const EdgeInsets.all(14),
-        itemCount: 6,
-        itemBuilder: (_, __) => Container(
-          height: 118,
-          margin: const EdgeInsets.only(bottom: 10),
-          decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18)),
-        ).animate(onPlay: (c) => c.repeat(reverse: true)).shimmer(duration: 900.ms),
-      );
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      padding: const EdgeInsets.all(14),
+      itemCount: 6,
+      itemBuilder: (_, __) => Container(
+        height: 118,
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+        ),
+      ).animate(onPlay: (c) => c.repeat(reverse: true)).shimmer(
+            duration: 900.ms,
+          ),
+    );
+  }
 }
 
 class _SmallLoadingCard extends StatelessWidget {
@@ -2168,7 +2646,9 @@ class _SmallLoadingCard extends StatelessWidget {
         color: const Color(0xFFF1F5F9),
         borderRadius: BorderRadius.circular(18),
       ),
-    ).animate(onPlay: (c) => c.repeat(reverse: true)).shimmer(duration: 900.ms);
+    ).animate(onPlay: (c) => c.repeat(reverse: true)).shimmer(
+          duration: 900.ms,
+        );
   }
 }
 
@@ -2176,7 +2656,10 @@ class _InlineError extends StatelessWidget {
   final String message;
   final VoidCallback onRetry;
 
-  const _InlineError({required this.message, required this.onRetry});
+  const _InlineError({
+    required this.message,
+    required this.onRetry,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2188,8 +2671,16 @@ class _InlineError extends StatelessWidget {
       ),
       child: Column(
         children: [
-          Text(message, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFFDC2626))),
-          TextButton.icon(onPressed: onRetry, icon: const Icon(Icons.refresh_rounded), label: const Text('Retry')),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Color(0xFFDC2626)),
+          ),
+          TextButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('Retry'),
+          ),
         ],
       ),
     );
@@ -2213,10 +2704,15 @@ class _EmptyTasks extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.inbox_rounded, size: 58, color: Color(0xFFCBD5E1)),
+          const Icon(
+            Icons.inbox_rounded,
+            size: 58,
+            color: Color(0xFFCBD5E1),
+          ),
           const SizedBox(height: 10),
           Text(
-            customText ?? (isAr ? 'لا توجد مهام في هذا القسم' : 'No tasks in this tab'),
+            customText ??
+                (isAr ? 'لا توجد مهام في هذا القسم' : 'No tasks in this tab'),
             style: const TextStyle(
               fontFamily: 'Cairo',
               color: Color(0xFF64748B),
@@ -2233,7 +2729,10 @@ class _ErrorState extends StatelessWidget {
   final String message;
   final VoidCallback onRetry;
 
-  const _ErrorState({required this.message, required this.onRetry});
+  const _ErrorState({
+    required this.message,
+    required this.onRetry,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -2243,11 +2742,22 @@ class _ErrorState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.error_outline_rounded, color: Color(0xFFDC2626), size: 44),
+            const Icon(
+              Icons.error_outline_rounded,
+              color: Color(0xFFDC2626),
+              size: 44,
+            ),
             const SizedBox(height: 10),
-            Text(message, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFFDC2626))),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Color(0xFFDC2626)),
+            ),
             const SizedBox(height: 12),
-            ElevatedButton(onPressed: onRetry, child: const Text('Retry')),
+            ElevatedButton(
+              onPressed: onRetry,
+              child: const Text('Retry'),
+            ),
           ],
         ),
       ),
@@ -2259,6 +2769,7 @@ class _InspectionStatusOption {
   final String value;
   final String ar;
   final String en;
+
   const _InspectionStatusOption(this.value, this.ar, this.en);
 }
 
@@ -2269,8 +2780,13 @@ const _inspectionStatuses = [
   _InspectionStatusOption('NOT_REACHABLE', 'غير متاح', 'Not reachable'),
 ];
 
-String _date(DateTime d) => '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
-String _dateTime(DateTime d) => '${_date(d)}  ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+String _date(DateTime d) {
+  return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+}
+
+String _dateTime(DateTime d) {
+  return '${_date(d)}  ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+}
 
 Color _inspectionColor(String status) {
   switch (status.toUpperCase()) {
@@ -2289,41 +2805,66 @@ Color _inspectionColor(String status) {
 
 Color _taskColor(TaskModel task) {
   final s = task.status.toUpperCase();
-  final urgent = task.isUrgent || task.isEmergency || task.priority.toUpperCase() == 'URGENT';
+
+  final urgent = task.isUrgent ||
+      task.isEmergency ||
+      task.priority.toUpperCase() == 'URGENT';
+
   if (urgent) return const Color(0xFFDC2626);
   if (s == 'COMPLETED') return const Color(0xFF16A34A);
   if (s == 'IN_PROGRESS') return const Color(0xFF0284C7);
   if (s == 'OVERDUE') return const Color(0xFFEA580C);
+
   return const Color(0xFF1A237E);
 }
 
 IconData _taskIcon(TaskModel task) {
   final s = task.status.toUpperCase();
-  final urgent = task.isUrgent || task.isEmergency || task.priority.toUpperCase() == 'URGENT';
+
+  final urgent = task.isUrgent ||
+      task.isEmergency ||
+      task.priority.toUpperCase() == 'URGENT';
+
   if (urgent) return Icons.bolt_rounded;
   if (s == 'COMPLETED') return Icons.check_circle_rounded;
   if (s == 'IN_PROGRESS') return Icons.play_circle_rounded;
   if (s == 'OVERDUE') return Icons.timer_off_rounded;
+
   return Icons.hourglass_empty_rounded;
 }
 
-List<InspectionDetail> _relatedInspections(TaskModel task, List<InspectionDetail> source) {
-  final deviceCode = (task.deviceCode ?? '').trim().toLowerCase();
-  final deviceName = (task.deviceName ?? '').trim().toLowerCase();
-  final techName = (task.assignedToName ?? '').trim().toLowerCase();
+List<InspectionDetail> _relatedInspections(
+  TaskModel task,
+  List<InspectionDetail> source,
+) {
+  final taskDeviceCode = (task.deviceCode ?? '').trim().toLowerCase();
+  final taskDeviceName = (task.deviceName ?? '').trim().toLowerCase();
+  final taskTechName = (task.assignedToName ?? '').trim().toLowerCase();
+  final taskCreatedAt = task.createdAt;
 
-  final result = source.where((i) {
-    final iCode = i.deviceCode.trim().toLowerCase();
-    final iDevice = i.deviceName.trim().toLowerCase();
-    final iTech = i.technicianName.trim().toLowerCase();
+  final result = source.where((inspection) {
+    final inspectionDeviceCode = inspection.deviceCode.trim().toLowerCase();
+    final inspectionDeviceName = inspection.deviceName.trim().toLowerCase();
+    final inspectionTechName = inspection.technicianName.trim().toLowerCase();
 
-    final sameDeviceCode = deviceCode.isNotEmpty && iCode == deviceCode;
-    final sameDeviceName = deviceName.isNotEmpty && iDevice == deviceName;
-    final sameTech = techName.isNotEmpty && iTech == techName;
+    final sameDeviceByCode = taskDeviceCode.isNotEmpty &&
+        inspectionDeviceCode.isNotEmpty &&
+        inspectionDeviceCode == taskDeviceCode;
 
-    if (sameDeviceCode || sameDeviceName) return true;
-    if (sameTech && (sameDeviceCode || sameDeviceName)) return true;
-    return false;
+    final sameDeviceByName = taskDeviceName.isNotEmpty &&
+        inspectionDeviceName.isNotEmpty &&
+        inspectionDeviceName == taskDeviceName;
+
+    final sameDevice = sameDeviceByCode || sameDeviceByName;
+
+    final sameTechnician = taskTechName.isNotEmpty &&
+        inspectionTechName.isNotEmpty &&
+        inspectionTechName == taskTechName;
+
+    final afterTaskCreated = inspection.inspectedAt.isAfter(taskCreatedAt) ||
+        inspection.inspectedAt.isAtSameMomentAs(taskCreatedAt);
+
+    return sameDevice && sameTechnician && afterTaskCreated;
   }).toList()
     ..sort((a, b) => b.inspectedAt.compareTo(a.inspectedAt));
 
@@ -2335,6 +2876,7 @@ extension _FirstWhereOrNullX<T> on Iterable<T> {
     for (final item in this) {
       if (test(item)) return item;
     }
+
     return null;
   }
 }

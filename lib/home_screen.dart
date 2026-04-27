@@ -25,9 +25,59 @@ class HomeScreen extends StatelessWidget {
     required this.onNotifications,
   });
 
+  TodayStats _effectiveStats() {
+    /*
+      حل مشكلة إن الصفحة تبدأ بصفر:
+      لو stats جاية كلها صفر لكن عندنا recentReports،
+      نحسب الأرقام من التفتيشات الموجودة بدل عرض صفر.
+    */
+    final bool statsAreZero = stats.totalInspected == 0 &&
+        stats.good == 0 &&
+        stats.needsMaintenance == 0 &&
+        stats.underReview == 0;
+
+    if (!statsAreZero || recentReports.isEmpty) {
+      return stats;
+    }
+
+    final now = DateTime.now();
+
+    final todayReports = recentReports.where((report) {
+      return report.createdAt.year == now.year &&
+          report.createdAt.month == now.month &&
+          report.createdAt.day == now.day;
+    }).toList();
+
+    int good = 0;
+    int needsMaintenance = 0;
+    int underReview = 0;
+
+    for (final report in todayReports) {
+      final result = report.result.trim().toLowerCase();
+
+      if (result == 'good') {
+        good++;
+      } else if (result == 'maintenance' ||
+          result == 'minor' ||
+          result == 'faulty') {
+        needsMaintenance++;
+      } else {
+        underReview++;
+      }
+    }
+
+    return TodayStats(
+      totalInspected: todayReports.length,
+      good: good,
+      needsMaintenance: needsMaintenance,
+      underReview: underReview,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final l = AppLocalizations.of(context);
+    final shownStats = _effectiveStats();
 
     return Scaffold(
       backgroundColor: AppColors.surfaceGrey,
@@ -72,7 +122,9 @@ class HomeScreen extends StatelessWidget {
                   radius: 18,
                   backgroundColor: Colors.white.withOpacity(0.12),
                   child: Text(
-                    user.name.length >= 2 ? user.name.substring(0, 2) : user.name,
+                    user.name.length >= 2
+                        ? user.name.substring(0, 2)
+                        : user.name,
                     style: const TextStyle(
                       fontFamily: 'Cairo',
                       fontSize: 13,
@@ -95,79 +147,74 @@ class HomeScreen extends StatelessWidget {
                     role: l.roleLabel(user.role),
                     region: user.region,
                   ).animate().fadeIn(duration: 500.ms).slideY(begin: 0.08),
-
                   const SizedBox(height: 28),
-
                   SectionHeader(
                     title: l.todayStats,
                     icon: Icons.analytics_outlined,
                   ).animate(delay: 100.ms).fadeIn(),
-
                   const SizedBox(height: 16),
-
                   ResponsiveStatGrid(
                     cards: [
                       StatCard(
                         icon: Icons.fact_check_rounded,
-                        value: stats.totalInspected.toString(),
-                        label: l.isAr ? 'إجمالي التفتيشات' : 'Total Inspections',
+                        value: shownStats.totalInspected.toString(),
+                        label:
+                            l.isAr ? 'إجمالي التفتيشات' : 'Total Inspections',
                         iconColor: AppColors.primary,
                         iconBg: AppColors.infoLight,
                       ),
                       StatCard(
                         icon: Icons.check_circle_rounded,
-                        value: stats.good.toString(),
+                        value: shownStats.good.toString(),
                         label: l.isAr ? 'سليم' : 'Good',
                         iconColor: AppColors.success,
                         iconBg: AppColors.successLight,
                       ),
                       StatCard(
                         icon: Icons.build_circle_rounded,
-                        value: stats.needsMaintenance.toString(),
-                        label: l.isAr ? 'يحتاج صيانة' : 'Needs Maintenance',
+                        value: shownStats.needsMaintenance.toString(),
+                        label:
+                            l.isAr ? 'يحتاج صيانة' : 'Needs Maintenance',
                         iconColor: AppColors.warning,
                         iconBg: AppColors.warningLight,
                       ),
                       StatCard(
                         icon: Icons.rate_review_rounded,
-                        value: stats.underReview.toString(),
+                        value: shownStats.underReview.toString(),
                         label: l.isAr ? 'تحت المراجعة' : 'Under Review',
                         iconColor: AppColors.error,
                         iconBg: AppColors.errorLight,
                       ),
                     ],
                   ).animate(delay: 180.ms).fadeIn().slideY(begin: 0.05),
-
                   const SizedBox(height: 32),
-
                   SectionHeader(
                     title: l.recentInsp,
                     icon: Icons.history_rounded,
                     actionLabel: l.viewAll,
                     onAction: onSeeAllReports,
                   ).animate(delay: 250.ms).fadeIn(),
-
                   const SizedBox(height: 16),
-
                   if (recentReports.isEmpty)
                     _EmptyHome(l: l).animate(delay: 300.ms).fadeIn()
                   else
                     ...recentReports.asMap().entries.map(
-                      (entry) => Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: _RecentTile(
-                          report: entry.value,
-                          l: l,
-                          onTap: () => onReportTap(entry.value),
-                        )
-                            .animate(
-                              delay: Duration(milliseconds: 320 + (entry.key * 60)),
+                          (entry) => Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: _RecentTile(
+                              report: entry.value,
+                              l: l,
+                              onTap: () => onReportTap(entry.value),
                             )
-                            .fadeIn(duration: 300.ms)
-                            .slideX(begin: 0.04),
-                      ),
-                    ),
-
+                                .animate(
+                                  delay: Duration(
+                                    milliseconds: 320 + (entry.key * 60),
+                                  ),
+                                )
+                                .fadeIn(duration: 300.ms)
+                                .slideX(begin: 0.04),
+                          ),
+                        ),
                   const SizedBox(height: 100),
                 ],
               ),
@@ -220,17 +267,22 @@ class _RecentTile extends StatelessWidget {
 
   String _timeLabel() {
     final diff = DateTime.now().difference(report.createdAt);
+
     if (diff.inMinutes < 60) {
       return l.isAr ? 'منذ ${diff.inMinutes} دقيقة' : '${diff.inMinutes}m ago';
     }
+
     if (diff.inHours < 24) {
       return '${l.todayLbl} ${report.createdAt.hour}:${report.createdAt.minute.toString().padLeft(2, "0")}';
     }
+
     return '${report.createdAt.day}/${report.createdAt.month}/${report.createdAt.year}';
   }
 
   @override
   Widget build(BuildContext context) {
+    final bool isOffline = report.reportNumber.startsWith('OFFLINE-');
+
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -261,9 +313,20 @@ class _RecentTile extends StatelessWidget {
                     style: AppText.caption.copyWith(
                       fontFamily: 'monospace',
                       fontWeight: FontWeight.w600,
-                      color: AppColors.accentDark,
+                      color:
+                          isOffline ? AppColors.warning : AppColors.accentDark,
                     ),
                   ),
+                  if (isOffline) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'محفوظ محليًا — في انتظار المزامنة',
+                      style: AppText.caption.copyWith(
+                        color: AppColors.warning,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
                   if (report.locationText.isNotEmpty) ...[
                     const SizedBox(height: 4),
                     Row(

@@ -94,7 +94,6 @@ class DeviceModel {
   final double? longitude;
   final String? imageUrl;
 
-  // مهم جدًا للربط مع الـ troubleshooting backend
   final int? backendDeviceTypeId;
   final String? backendDeviceTypeName;
   final String? backendCategoryName;
@@ -193,7 +192,7 @@ class DeviceModel {
         latitude: (json['latitude'] as num?)?.toDouble(),
         longitude: (json['longitude'] as num?)?.toDouble(),
         imageUrl: json['image_url']?.toString(),
-        backendDeviceTypeId: json['backend_device_type_id'] as int?,
+        backendDeviceTypeId: (json['backend_device_type_id'] as num?)?.toInt(),
         backendDeviceTypeName: json['backend_device_type_name']?.toString(),
         backendCategoryName: json['backend_category_name']?.toString(),
       );
@@ -237,6 +236,7 @@ class InspectionIssueOption {
   final int deviceTypeId;
   final String categoryName;
   final String deviceTypeName;
+  final List<IssueSolutionModel> solutions;
 
   const InspectionIssueOption({
     required this.id,
@@ -249,11 +249,30 @@ class InspectionIssueOption {
     required this.deviceTypeId,
     required this.categoryName,
     required this.deviceTypeName,
+    this.solutions = const [],
   });
 
   factory InspectionIssueOption.fromJson(Map<String, dynamic> json) {
     final category = json['category'] as Map<String, dynamic>? ?? {};
     final deviceType = json['deviceType'] as Map<String, dynamic>? ?? {};
+
+    final rawSolutions = json['solutions'];
+    final parsedSolutions = <IssueSolutionModel>[];
+
+    if (rawSolutions is List) {
+      for (final item in rawSolutions) {
+        if (item is Map) {
+          final solution = IssueSolutionModel.fromJson(
+            Map<String, dynamic>.from(item),
+          );
+          if (solution.id > 0) {
+            parsedSolutions.add(solution);
+          }
+        }
+      }
+    }
+
+    parsedSolutions.sort((a, b) => a.stepOrder.compareTo(b.stepOrder));
 
     return InspectionIssueOption(
       id: (json['id'] as num?)?.toInt() ?? 0,
@@ -266,6 +285,7 @@ class InspectionIssueOption {
       deviceTypeId: (json['deviceTypeId'] as num?)?.toInt() ?? 0,
       categoryName: category['name']?.toString() ?? '',
       deviceTypeName: deviceType['name']?.toString() ?? '',
+      solutions: parsedSolutions,
     );
   }
 }
@@ -340,7 +360,6 @@ class InspectionDraft extends HiveObject {
   @HiveField(10)
   String inspectorId;
 
-  // إضافات جديدة للـ troubleshooting flow
   @HiveField(11)
   bool isGood;
 

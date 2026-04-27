@@ -4,12 +4,13 @@ class ApiConstants {
   static const connectTimeout = Duration(seconds: 30);
   static const receiveTimeout = Duration(seconds: 60);
 
-  static String get baseUrl {
+static String get baseUrl {
   if (kIsWeb) {
     return 'http://localhost:3000';
   }
-  return  'http://192.168.1.10:3000';
+  return 'http://192.168.1.28:3000';
 }
+
   static const login = '/auth/login';
   static const refreshToken = '/auth/refresh';
   static const logout = '/auth/logout';
@@ -33,6 +34,24 @@ class ApiConstants {
 
   static const myTasks = '/inspection-tasks/my-tasks';
   static const myTaskHistory = '/inspection-tasks/my-history';
+
+  // Admin endpoints
+  static const adminUsers = '/users';
+  static const adminTechnicians = '/users/technicians';
+  static const activeTechnicians = '/users/technicians/active';
+
+  static const adminTasks = '/inspection-tasks';
+  static const adminTaskById = '/inspection-tasks';
+  static const tasksByTechnician = '/inspection-tasks/technician';
+
+  static const adminDevices = '/devices';
+  static const adminLocations = '/locations';
+
+  static const adminInspections = '/inspections';
+  static const inspectionsByTechnician = '/inspections/technician';
+
+  static const dashboardStats = '/dashboard/stats';
+  static const dashboardAnalytics = '/dashboard/analytics';
 }
 
 class StorageKeys {
@@ -54,15 +73,43 @@ class HiveBoxes {
   static const appSettings = 'app_settings';
 }
 
-enum DeviceStatus { good, needsMaintenance, underReview, faulty, maintenance }
+enum DeviceStatus {
+  good,
+  needsMaintenance,
+  underReview,
+  faulty,
+  maintenance,
+}
 
-enum DeviceType { computer, printer, camera, accessControl, projector, scanner, other }
+enum DeviceType {
+  computer,
+  printer,
+  camera,
+  accessControl,
+  projector,
+  scanner,
+  other,
+}
 
-enum InspectionResult { good, minorIssue, maintenance, faulty }
+enum InspectionResult {
+  good,
+  minorIssue,
+  maintenance,
+  faulty,
+}
 
-enum SyncStatus { synced, pending, failed }
+enum SyncStatus {
+  synced,
+  pending,
+  failed,
+}
 
-enum UserRole { technician, supervisor, admin, military }
+enum UserRole {
+  technician,
+  supervisor,
+  admin,
+  military,
+}
 
 extension DeviceStatusExt on DeviceStatus {
   String get labelAr {
@@ -204,7 +251,8 @@ class AppStrings {
   static const sendReport = 'إرسال تقرير التفتيش';
 
   static const reportSent = 'تم إرسال التقرير بنجاح!';
-  static const reportSavedNote = 'تم حفظ تقرير التفتيش وتحديث حالة الجهاز في قاعدة البيانات الوزارية';
+  static const reportSavedNote =
+      'تم حفظ تقرير التفتيش وتحديث حالة الجهاز في قاعدة البيانات الوزارية';
   static const reportSummary = 'ملخص التقرير';
   static const scanAnother = 'مسح جهاز آخر';
   static const backHome = 'العودة للرئيسية';
@@ -225,7 +273,8 @@ class AppStrings {
   static const connected = 'متصل بالخادم الوزاري';
   static const syncNow = 'مزامنة الآن';
   static const offlineMode = 'وضع عدم الاتصال';
-  static const offlineNote = 'يمكنك متابعة التفتيش بدون إنترنت، سيتم رفع التقارير تلقائياً عند الاتصال بالشبكة';
+  static const offlineNote =
+      'يمكنك متابعة التفتيش بدون إنترنت، سيتم رفع التقارير تلقائياً عند الاتصال بالشبكة';
 
   static const navHome = 'الرئيسية';
   static const navReports = 'التقارير';

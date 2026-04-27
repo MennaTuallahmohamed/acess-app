@@ -14,7 +14,7 @@ final currentUserProvider = Provider<UserModel?>((ref) {
   return ref.watch(authProvider).valueOrNull;
 });
 
-final technicianReportsProvider =
+final technicianOnlineReportsProvider =
     FutureProvider.autoDispose<List<ReportModel>>((ref) async {
   final user = ref.watch(currentUserProvider);
 
@@ -22,7 +22,43 @@ final technicianReportsProvider =
     return [];
   }
 
-  return ref.watch(technicianRepositoryProvider).getMyReports(user.id);
+  final reports =
+      await ref.watch(technicianRepositoryProvider).getMyReports(user.id);
+
+  return reports..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+});
+
+final technicianOfflineReportsProvider =
+    FutureProvider.autoDispose<List<ReportModel>>((ref) async {
+  final user = ref.watch(currentUserProvider);
+
+  if (user == null || user.role.toLowerCase() != 'technician') {
+    return [];
+  }
+
+  final reports = await ref
+      .watch(technicianRepositoryProvider)
+      .getOfflinePendingReports(
+        technicianId: user.id,
+        technicianName: user.name,
+      );
+
+  return reports..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+});
+
+final technicianReportsProvider =
+    FutureProvider.autoDispose<List<ReportModel>>((ref) async {
+  final online = await ref.watch(technicianOnlineReportsProvider.future);
+  final offline = await ref.watch(technicianOfflineReportsProvider.future);
+
+  final merged = <ReportModel>[
+    ...offline,
+    ...online,
+  ];
+
+  merged.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+  return merged;
 });
 
 final allReportsProvider = technicianReportsProvider;
@@ -73,7 +109,10 @@ final inspectionSubmitProvider = StateNotifierProvider<
 
 final syncProvider =
     StateNotifierProvider<SyncController, SyncStatusModel>((ref) {
-  return SyncController(ref.watch(technicianRepositoryProvider));
+  return SyncController(
+    ref.watch(technicianRepositoryProvider),
+    ref,
+  );
 });
 
 class AuthController extends StateNotifier<AsyncValue<UserModel?>> {
@@ -134,6 +173,19 @@ class DeviceScanController extends StateNotifier<AsyncValue<DeviceModel?>> {
     }
   }
 
+  Future<bool> scanSecretCode(String secretCode) async {
+    state = const AsyncValue.loading();
+
+    try {
+      final device = await _repository.getDeviceBySecretCode(secretCode);
+      state = AsyncValue.data(device);
+      return true;
+    } catch (error, stackTrace) {
+      state = AsyncValue.error(error, stackTrace);
+      return false;
+    }
+  }
+
   void clear() {
     state = const AsyncValue.data(null);
   }
@@ -166,15 +218,19 @@ class InspectionSubmitController
 
 class SyncController extends StateNotifier<SyncStatusModel> {
   final TechnicianRepository _repository;
+  final Ref _ref;
+
   Timer? _retryTimer;
   bool _isSyncing = false;
 
-  SyncController(this._repository) : super(_initialState()) {
+  SyncController(this._repository, this._ref) : super(_initialState()) {
     Future.microtask(() async {
-      await _refreshState();
+      await refreshOnly();
 
       if (state.pending > 0) {
         await syncNow();
+      } else {
+        _refreshReportProviders();
       }
     });
 
@@ -197,7 +253,16 @@ class SyncController extends StateNotifier<SyncStatusModel> {
     );
   }
 
-  Future<void> _refreshState({
+  void _refreshReportProviders() {
+    _ref.invalidate(technicianOfflineReportsProvider);
+    _ref.invalidate(technicianOnlineReportsProvider);
+    _ref.invalidate(technicianReportsProvider);
+    _ref.invalidate(allReportsProvider);
+    _ref.invalidate(todayStatsProvider);
+    _ref.invalidate(recentInspectionsProvider);
+  }
+
+  Future<void> refreshOnly({
     bool isConnected = true,
     int synced = 0,
     int failed = 0,
@@ -214,6 +279,8 @@ class SyncController extends StateNotifier<SyncStatusModel> {
       lastSyncTime: lastSyncTime ?? state.lastSyncTime,
       pendingItems: pendingItems,
     );
+
+    _refreshReportProviders();
   }
 
   Future<void> syncNow() async {
@@ -236,6 +303,8 @@ class SyncController extends StateNotifier<SyncStatusModel> {
         lastSyncTime: DateTime.now(),
         pendingItems: pendingItems,
       );
+
+      _refreshReportProviders();
     } catch (_) {
       final pending = await _repository.pendingOfflineCount();
       final pendingItems = await _repository.getPendingSyncItems();
@@ -248,6 +317,8 @@ class SyncController extends StateNotifier<SyncStatusModel> {
         lastSyncTime: state.lastSyncTime,
         pendingItems: pendingItems,
       );
+
+      _refreshReportProviders();
     } finally {
       _isSyncing = false;
     }
@@ -259,7 +330,7 @@ class SyncController extends StateNotifier<SyncStatusModel> {
     final pending = await _repository.pendingOfflineCount();
 
     if (pending <= 0) {
-      await _refreshState();
+      await refreshOnly();
       return;
     }
 

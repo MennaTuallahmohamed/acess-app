@@ -22,13 +22,20 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
   await Hive.initFlutter();
   await Hive.openBox('device_cache');
   await Hive.openBox('pending_inspections');
   await Hive.openBox('app_settings');
-  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+  ]);
+
   runApp(const ProviderScope(child: _RootApp()));
 }
 
@@ -50,30 +57,37 @@ class _RootAppState extends State<_RootApp> {
     );
 
     return LanguageController(
-      child: Builder(builder: (context) {
-        final locale = LanguageController.of(context).locale;
-        final isAr = locale.languageCode == 'ar';
+      child: Builder(
+        builder: (context) {
+          final locale = LanguageController.of(context).locale;
+          final isAr = locale.languageCode == 'ar';
 
-        return MaterialApp(
-          title: 'Field Inspection System',
-          debugShowCheckedModeBanner: false,
-          theme: AppTheme.light,
-          navigatorKey: navigatorKey,
-          locale: locale,
-          supportedLocales: const [Locale('ar', 'EG'), Locale('en', 'US')],
-          localizationsDelegates: const [
-            AppLocalizations.delegate,
-            GlobalMaterialLocalizations.delegate,
-            GlobalWidgetsLocalizations.delegate,
-            GlobalCupertinoLocalizations.delegate,
-          ],
-          builder: (context, child) => Directionality(
-            textDirection: isAr ? TextDirection.rtl : TextDirection.ltr,
-            child: child!,
-          ),
-          home: const _AppShell(),
-        );
-      }),
+          return MaterialApp(
+            title: 'Field Inspection System',
+            debugShowCheckedModeBanner: false,
+            theme: AppTheme.light,
+            navigatorKey: navigatorKey,
+            locale: locale,
+            supportedLocales: const [
+              Locale('ar', 'EG'),
+              Locale('en', 'US'),
+            ],
+            localizationsDelegates: const [
+              AppLocalizations.delegate,
+              GlobalMaterialLocalizations.delegate,
+              GlobalWidgetsLocalizations.delegate,
+              GlobalCupertinoLocalizations.delegate,
+            ],
+            builder: (context, child) {
+              return Directionality(
+                textDirection: isAr ? TextDirection.rtl : TextDirection.ltr,
+                child: child ?? const SizedBox.shrink(),
+              );
+            },
+            home: const _AppShell(),
+          );
+        },
+      ),
     );
   }
 }
@@ -94,11 +108,15 @@ class _AppShellState extends ConsumerState<_AppShell> {
   Widget build(BuildContext context) {
     if (!_splashDone) {
       return SplashScreen(
-        onFinished: () => setState(() => _splashDone = true),
+        onFinished: () {
+          if (!mounted) return;
+          setState(() => _splashDone = true);
+        },
       );
     }
 
     final authState = ref.watch(authProvider);
+
     if (authState.isLoading) {
       return const Scaffold(
         body: Center(child: CircularProgressIndicator()),
@@ -106,10 +124,14 @@ class _AppShellState extends ConsumerState<_AppShell> {
     }
 
     final currentUser = authState.valueOrNull;
+
     if (currentUser == null) {
       if (_selectedRole == null) {
         return RoleSelectionScreen(
-          onRoleSelected: (role) => setState(() => _selectedRole = role),
+          onRoleSelected: (role) {
+            if (!mounted) return;
+            setState(() => _selectedRole = role);
+          },
         );
       }
 
@@ -119,7 +141,10 @@ class _AppShellState extends ConsumerState<_AppShell> {
       );
     }
 
-    return _routeByRole(currentUser, selectedRole: _selectedRole);
+    return _routeByRole(
+      currentUser,
+      selectedRole: _selectedRole,
+    );
   }
 
   Future<bool> _handleLogin(
@@ -127,14 +152,19 @@ class _AppShellState extends ConsumerState<_AppShell> {
     String password,
     String role,
   ) async {
-    final ok =
-        await ref.read(authProvider.notifier).login(email, password, role);
-    if (ok) {
+    final ok = await ref.read(authProvider.notifier).login(
+          email,
+          password,
+          role,
+        );
+
+    if (ok && mounted) {
       setState(() {
         _selectedRole = role;
         _navIndex = 0;
       });
     }
+
     return ok;
   }
 
@@ -143,6 +173,7 @@ class _AppShellState extends ConsumerState<_AppShell> {
       _selectedRole = null;
       _navIndex = 0;
     });
+
     ref.read(authProvider.notifier).logout();
   }
 
@@ -179,6 +210,9 @@ class _AppShellState extends ConsumerState<_AppShell> {
           _openScan();
           return;
         }
+
+        if (!mounted) return;
+
         setState(() => _navIndex = index);
       },
       onScan: _openScan,
@@ -189,48 +223,118 @@ class _AppShellState extends ConsumerState<_AppShell> {
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ScanBarcodeScreen(
-          onBarcodeScanned: (code) {
-            Navigator.pop(context);
-            _openDeviceFromCode(code);
-          },
-          onManualSearch: (code) {
-            Navigator.pop(context);
-            _openDeviceFromCode(code);
-          },
-          recentScans: const [],
-        ),
+        builder: (_) {
+          return ScanBarcodeScreen(
+            recentScans: const [],
+
+            /*
+              QR Scan:
+              لازم QR يكون شايل secretCode فقط.
+              هنا بنضرب:
+              GET /devices/scan/:secretCode
+            */
+            onBarcodeScanned: (secretCode) async {
+              try {
+                final device = await ref
+                    .read(technicianRepositoryProvider)
+                    .getDeviceBySecretCode(secretCode);
+
+                if (!mounted) return false;
+
+                Navigator.pop(context);
+
+                _openDeviceDetails(device);
+
+                return true;
+              } catch (error) {
+                debugPrint('QR SECRET CODE SCAN ERROR: $error');
+                return false;
+              }
+            },
+
+            /*
+              Manual Search:
+              ده مش هيفتح غير بعد 3 محاولات QR فاشلة.
+              بيدعم:
+              IP / Device Code / Serial Number / Barcode
+            */
+            onManualSearch: (code) async {
+              final device = await ref
+                  .read(technicianRepositoryProvider)
+                  .searchDeviceManual(code);
+
+              if (!mounted) return;
+
+              Navigator.pop(context);
+
+              _openDeviceDetails(device);
+            },
+
+            /*
+              Audit:
+              تسجيل محاولات QR في الباك إند.
+            */
+            onQrAttemptLogged: ({
+              required scannedCode,
+              required success,
+              required attemptNumber,
+              reason,
+            }) async {
+              await ref.read(technicianRepositoryProvider).logQrScanAttempt(
+                    scannedCode: scannedCode,
+                    success: success,
+                    attemptNumber: attemptNumber,
+                    reason: reason,
+                  );
+            },
+          );
+        },
+      ),
+    );
+  }
+
+  void _openDeviceDetails(DeviceModel device) {
+    if (!mounted) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) {
+          return DeviceDetailsScreen(
+            device: device,
+            onBack: () => Navigator.pop(context),
+            onStartInspection: () {
+              Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => _buildInspectionForm(device),
+                ),
+              );
+            },
+          );
+        },
       ),
     );
   }
 
   Future<void> _openDeviceFromCode(String code) async {
-    final ok = await ref.read(deviceScanProvider.notifier).scan(code);
-    if (!ok || !mounted) {
+    try {
+      final device = await ref
+          .read(technicianRepositoryProvider)
+          .searchDeviceManual(code);
+
+      if (!mounted) return;
+
+      _openDeviceDetails(device);
+    } catch (error) {
+      if (!mounted) return;
+
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('لم يتم العثور على الجهاز')),
-      );
-      return;
-    }
-
-    final device = ref.read(deviceScanProvider).valueOrNull;
-    if (device == null) {
-      return;
-    }
-
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => DeviceDetailsScreen(
-          device: device,
-          onBack: () => Navigator.pop(context),
-          onStartInspection: () => Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (_) => _buildInspectionForm(device)),
-          ),
+        const SnackBar(
+          content: Text('لم يتم العثور على الجهاز'),
         ),
-      ),
-    );
+      );
+    }
   }
 
   Widget _buildInspectionForm(DeviceModel device) {
@@ -242,13 +346,15 @@ class _AppShellState extends ConsumerState<_AppShell> {
       onBack: () => Navigator.pop(context),
       onSubmit: (draft) async {
         final currentUser = ref.read(currentUserProvider);
+
         if (currentUser == null) {
           return 'يجب تسجيل الدخول أولاً';
         }
 
         try {
-          final result =
-              await ref.read(inspectionSubmitProvider.notifier).submit(draft);
+          final result = await ref
+              .read(inspectionSubmitProvider.notifier)
+              .submit(draft);
 
           if (!mounted) return null;
 
@@ -264,22 +370,25 @@ class _AppShellState extends ConsumerState<_AppShell> {
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(
-              builder: (_) => InspectionSuccessScreen(
-                reportNumber: result.reportNumber,
-                deviceName: device.name,
-                result: draft.result,
-                inspectorName: currentUser.name,
-                lat: draft.latitude,
-                lng: draft.longitude,
-                onScanAnother: () {
-                  Navigator.of(context).popUntil((route) => route.isFirst);
-                  _openScan();
-                },
-                onGoHome: () {
-                  Navigator.of(context).popUntil((route) => route.isFirst);
-                  setState(() => _navIndex = 0);
-                },
-              ),
+              builder: (_) {
+                return InspectionSuccessScreen(
+                  reportNumber: result.reportNumber,
+                  deviceName: device.name,
+                  result: draft.result,
+                  inspectorName: currentUser.name,
+                  lat: draft.latitude,
+                  lng: draft.longitude,
+                  onScanAnother: () {
+                    Navigator.of(context).popUntil((route) => route.isFirst);
+                    _openScan();
+                  },
+                  onGoHome: () {
+                    Navigator.of(context).popUntil((route) => route.isFirst);
+                    if (!mounted) return;
+                    setState(() => _navIndex = 0);
+                  },
+                );
+              },
             ),
           );
 
@@ -318,9 +427,11 @@ class _TechnicianShell extends ConsumerWidget {
         );
 
     final reports = ref.watch(allReportsProvider).valueOrNull ?? [];
+
     final recentReports =
         ref.watch(recentInspectionsProvider).valueOrNull ??
             reports.take(5).toList();
+
     final syncStatus = ref.watch(syncProvider);
 
     late final Widget screen;
@@ -334,52 +445,74 @@ class _TechnicianShell extends ConsumerWidget {
           onScan: onScan,
           onReportTap: (_) {},
           onSeeAllReports: () => onNavChange(1),
-          onNotifications: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const NotificationsScreen()),
-          ),
+          onNotifications: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const NotificationsScreen(),
+              ),
+            );
+          },
         );
         break;
+
       case 1:
         screen = ReportsScreen(
           reports: reports,
           onReportTap: (_) {},
         );
         break;
+
       case 3:
         screen = SyncScreen(
           status: syncStatus,
           onSync: () => ref.read(syncProvider.notifier).syncNow(),
         );
         break;
+
       case 4:
         screen = ProfileScreen(
           user: user,
           onLogout: onLogout,
-          onPersonalData: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => PersonalDataScreen(user: user)),
-          ),
-          onNotifications: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const NotificationsScreen()),
-          ),
-          onSecurity: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const SettingsScreen()),
-          ),
-          onMonthlyReports: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => MonthlyReportsScreen(
-                reports: reports,
-                inspectorName: user.name,
-                region: user.region,
+          onPersonalData: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => PersonalDataScreen(user: user),
               ),
-            ),
-          ),
+            );
+          },
+          onNotifications: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const NotificationsScreen(),
+              ),
+            );
+          },
+          onSecurity: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const SettingsScreen(),
+              ),
+            );
+          },
+          onMonthlyReports: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => MonthlyReportsScreen(
+                  reports: reports,
+                  inspectorName: user.name,
+                  region: user.region,
+                ),
+              ),
+            );
+          },
         );
         break;
+
       default:
         screen = HomeScreen(
           user: user,
@@ -388,10 +521,14 @@ class _TechnicianShell extends ConsumerWidget {
           onScan: onScan,
           onReportTap: (_) {},
           onSeeAllReports: () => onNavChange(1),
-          onNotifications: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const NotificationsScreen()),
-          ),
+          onNotifications: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => const NotificationsScreen(),
+              ),
+            );
+          },
         );
     }
 

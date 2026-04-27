@@ -5,6 +5,85 @@ import 'package:access_track/core/api/api_client.dart';
 import 'package:dio/dio.dart';
 
 // ════════════════════════════════════════════════════════
+//  ADMIN USER OPTION — used for "Created By Admin" dropdown
+// ════════════════════════════════════════════════════════
+
+class AdminUserOption {
+  final String id;
+  final String fullName;
+  final String username;
+  final String email;
+  final String role;
+  final bool isActive;
+
+  const AdminUserOption({
+    required this.id,
+    required this.fullName,
+    required this.username,
+    required this.email,
+    required this.role,
+    required this.isActive,
+  });
+
+  factory AdminUserOption.fromJson(Map<String, dynamic> json) {
+    final idValue = json['id'] ??
+        json['userId'] ??
+        json['adminId'] ??
+        json['sub'] ??
+        '';
+
+    final firstName = json['firstName']?.toString() ?? '';
+    final lastName = json['lastName']?.toString() ?? '';
+
+    final nameFromParts = '$firstName $lastName'.trim();
+
+    final name = json['fullName']?.toString() ??
+        json['name']?.toString() ??
+        json['displayName']?.toString() ??
+        nameFromParts;
+
+    final username = json['username']?.toString() ??
+        json['userName']?.toString() ??
+        json['email']?.toString() ??
+        '';
+
+    final email = json['email']?.toString() ?? '';
+
+    final role = json['role']?.toString() ??
+        json['roleName']?.toString() ??
+        json['type']?.toString() ??
+        '';
+
+    final rawActive = json['isActive'] ?? json['active'] ?? json['enabled'];
+    final status = json['status']?.toString().toUpperCase() ?? '';
+
+    final isActive = rawActive is bool
+        ? rawActive
+        : status.isEmpty
+            ? true
+            : status == 'ACTIVE';
+
+    return AdminUserOption(
+      id: idValue.toString(),
+      fullName: name.trim().isEmpty ? username : name.trim(),
+      username: username,
+      email: email,
+      role: role,
+      isActive: isActive,
+    );
+  }
+
+  String get label {
+    final parts = <String>[
+      fullName.trim().isEmpty ? username : fullName,
+      if (email.trim().isNotEmpty) email,
+    ];
+
+    return parts.where((e) => e.trim().isNotEmpty).join(' — ');
+  }
+}
+
+// ════════════════════════════════════════════════════════
 //  ADMIN REPOSITORY — all admin backend endpoints
 // ════════════════════════════════════════════════════════
 
@@ -21,6 +100,63 @@ class AdminRepository {
     try {
       final res = await _dio.get('/dashboard/admin');
       return AdminStats.fromJson(_unwrapMap(res.data));
+    } on DioException catch (e) {
+      throw ApiException.fromDio(e);
+    }
+  }
+
+  // ══════════════════════════════════════════════════════
+  //  ADMINS — createdBy dropdown
+  // ══════════════════════════════════════════════════════
+
+  Future<List<AdminUserOption>> getAdmins({bool activeOnly = true}) async {
+    try {
+      final res = await _dio.get(
+        '/users',
+        queryParameters: {
+          'role': 'ADMIN',
+          if (activeOnly) 'isActive': true,
+        },
+      );
+
+      final list = _unwrapList(res.data)
+          .map((e) => AdminUserOption.fromJson(_asMap(e)))
+          .where((u) {
+        final role = u.role.toUpperCase();
+
+        final looksLikeAdmin = role == 'ADMIN' ||
+            role == 'SUPER_ADMIN' ||
+            role == 'COMPANY_ADMIN' ||
+            role.contains('ADMIN');
+
+        if (activeOnly) {
+          return looksLikeAdmin && u.isActive;
+        }
+
+        return looksLikeAdmin;
+      }).toList();
+
+      if (list.isNotEmpty) return list;
+
+      // Fallback: لو /users?role=ADMIN رجع فاضي، هنجرب /users ونفلتر محليًا.
+      final allRes = await _dio.get('/users');
+
+      return _unwrapList(allRes.data)
+          .map((e) => AdminUserOption.fromJson(_asMap(e)))
+          .where((u) {
+        final role = u.role.toUpperCase();
+
+        final looksLikeAdmin = role == 'ADMIN' ||
+            role == 'SUPER_ADMIN' ||
+            role == 'COMPANY_ADMIN' ||
+            role.contains('ADMIN');
+
+        if (activeOnly) {
+          return looksLikeAdmin && u.isActive;
+        }
+
+        return looksLikeAdmin;
+      }).toList();
     } on DioException catch (e) {
       throw ApiException.fromDio(e);
     }
@@ -44,7 +180,6 @@ class AdminRepository {
         queryParameters: {
           if (_valid(status)) 'status': status,
           if (_valid(assignedToId)) 'assignedToId': assignedToId,
-          if (_valid(assignedToId)) 'assignedTo': assignedToId,
           if (_valid(priority)) 'priority': priority,
           if (_valid(deviceId)) 'deviceId': deviceId,
           if (_valid(locationId)) 'locationId': locationId,
@@ -83,9 +218,33 @@ class AdminRepository {
     }
   }
 
-  Future<TaskModel> createTask(CreateTaskRequest req) async {
+  Future<TaskModel> createTask(
+    CreateTaskRequest req, {
+    required String createdById,
+  }) async {
     try {
-      final res = await _dio.post('/inspection-tasks', data: req.toJson());
+      final data = Map<String, dynamic>.from(req.toJson());
+
+      // مهم جدًا: الباك إند عندك محتاج createdById integer.
+      data['createdById'] = _toIntOrString(createdById);
+
+      // assignedTo ساعات بتعمل validation error لو DTO مش مستنيها.
+      // الباك عندك واضح إنه بيحتاج assignedToId.
+      data.remove('assignedTo');
+
+      if (data['assignedToId'] != null) {
+        data['assignedToId'] = _toIntOrString(data['assignedToId']);
+      }
+
+      if (data['deviceId'] != null) {
+        data['deviceId'] = _toIntOrString(data['deviceId']);
+      }
+
+      if (data['locationId'] != null) {
+        data['locationId'] = _toIntOrString(data['locationId']);
+      }
+
+      final res = await _dio.post('/inspection-tasks', data: data);
       return TaskModel.fromJson(_unwrapMap(res.data));
     } on DioException catch (e) {
       throw ApiException.fromDio(e);
@@ -94,7 +253,27 @@ class AdminRepository {
 
   Future<TaskModel> updateTask(String id, Map<String, dynamic> data) async {
     try {
-      final res = await _dio.patch('/inspection-tasks/$id', data: data);
+      final clean = Map<String, dynamic>.from(data);
+
+      clean.remove('assignedTo');
+
+      if (clean['assignedToId'] != null) {
+        clean['assignedToId'] = _toIntOrString(clean['assignedToId']);
+      }
+
+      if (clean['createdById'] != null) {
+        clean['createdById'] = _toIntOrString(clean['createdById']);
+      }
+
+      if (clean['deviceId'] != null) {
+        clean['deviceId'] = _toIntOrString(clean['deviceId']);
+      }
+
+      if (clean['locationId'] != null) {
+        clean['locationId'] = _toIntOrString(clean['locationId']);
+      }
+
+      final res = await _dio.patch('/inspection-tasks/$id', data: clean);
       return TaskModel.fromJson(_unwrapMap(res.data));
     } on DioException catch (e) {
       throw ApiException.fromDio(e);
@@ -111,8 +290,7 @@ class AdminRepository {
 
   Future<TaskModel> reassignTask(String taskId, String newTechnicianId) {
     return updateTask(taskId, {
-      'assignedToId': int.tryParse(newTechnicianId) ?? newTechnicianId,
-      'assignedTo': int.tryParse(newTechnicianId) ?? newTechnicianId,
+      'assignedToId': _toIntOrString(newTechnicianId),
       'status': 'PENDING',
     });
   }
@@ -364,6 +542,15 @@ class AdminRepository {
 
   bool _valid(String? v) => v != null && v.trim().isNotEmpty && v != 'ALL';
 
+  dynamic _toIntOrString(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+
+    final asString = value.toString().trim();
+    return int.tryParse(asString) ?? asString;
+  }
+
   Map<String, dynamic> _asMap(dynamic raw) {
     if (raw is Map<String, dynamic>) return raw;
     if (raw is Map) return raw.cast<String, dynamic>();
@@ -396,7 +583,24 @@ class AdminRepository {
       final map = raw.cast<String, dynamic>();
 
       final data = map['data'];
+
       if (data is List) return data;
+
+      if (data is Map) {
+        final dataMap = data.cast<String, dynamic>();
+
+        final nestedItems = dataMap['items'];
+        if (nestedItems is List) return nestedItems;
+
+        final nestedResults = dataMap['results'];
+        if (nestedResults is List) return nestedResults;
+
+        final nestedRows = dataMap['rows'];
+        if (nestedRows is List) return nestedRows;
+
+        final nestedRecords = dataMap['records'];
+        if (nestedRecords is List) return nestedRecords;
+      }
 
       final items = map['items'];
       if (items is List) return items;
@@ -404,11 +608,26 @@ class AdminRepository {
       final result = map['result'];
       if (result is List) return result;
 
+      final results = map['results'];
+      if (results is List) return results;
+
       final rows = map['rows'];
       if (rows is List) return rows;
 
       final records = map['records'];
       if (records is List) return records;
+
+      final users = map['users'];
+      if (users is List) return users;
+
+      final admins = map['admins'];
+      if (admins is List) return admins;
+
+      final tasks = map['tasks'];
+      if (tasks is List) return tasks;
+
+      final inspections = map['inspections'];
+      if (inspections is List) return inspections;
     }
 
     return <dynamic>[];
