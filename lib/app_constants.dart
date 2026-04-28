@@ -4,12 +4,12 @@ class ApiConstants {
   static const connectTimeout = Duration(seconds: 30);
   static const receiveTimeout = Duration(seconds: 60);
 
-static String get baseUrl {
-  if (kIsWeb) {
-    return 'http://localhost:3000';
+  static const String productionBaseUrl =
+      'https://acess-backend-production.up.railway.app';
+
+  static String get baseUrl {
+    return productionBaseUrl;
   }
-  return 'http://192.168.1.28:3000';
-}
 
   static const login = '/auth/login';
   static const refreshToken = '/auth/refresh';
